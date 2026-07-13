@@ -1,0 +1,47 @@
+# ============================================================
+#  Docker Compose — PostgreSQL + Backend NestJS
+# ============================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: transport_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-transport}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-transport}
+      POSTGRES_DB: ${POSTGRES_DB:-transport_db}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-transport} -d ${POSTGRES_DB:-transport_db}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: transport_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      API_PREFIX: api
+      SWAGGER_PATH: docs
+      DATABASE_URL: postgresql://${POSTGRES_USER:-transport}:${POSTGRES_PASSWORD:-transport}@postgres:5432/${POSTGRES_DB:-transport_db}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access_secret}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh_secret}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    ports:
+      - '3000:3000'
+
+volumes:
+  postgres_data:

@@ -1,0 +1,2 @@
+# Ne pas modifier. Ce fichier est utilisé par Prisma Migrate pour verrouiller le fournisseur.
+provider = "postgresql"
