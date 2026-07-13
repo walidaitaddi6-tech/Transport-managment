@@ -1,0 +1,50 @@
+### Tests manuels du module Rôles (nécessite un token ADMIN)
+
+@baseUrl = http://localhost:3000/api
+
+### Login admin
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "admin@transport.ma", "password": "Passw0rd!" }
+
+@token = {{login.response.body.accessToken}}
+
+### Lister (pagination + recherche)
+GET {{baseUrl}}/roles?page=1&limit=10&search=&sortBy=id&sortOrder=asc
+Authorization: Bearer {{token}}
+
+### Créer
+# @name create
+POST {{baseUrl}}/roles
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "nom": "SUPERVISEUR", "description": "Supervision des opérations" }
+
+### Créer en double -> 409
+POST {{baseUrl}}/roles
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "nom": "SUPERVISEUR" }
+
+### Détail
+GET {{baseUrl}}/roles/{{create.response.body.id}}
+Authorization: Bearer {{token}}
+
+### Modifier
+PATCH {{baseUrl}}/roles/{{create.response.body.id}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "description": "Supervision et coordination" }
+
+### Supprimer
+DELETE {{baseUrl}}/roles/{{create.response.body.id}}
+Authorization: Bearer {{token}}
+
+### Supprimer un rôle utilisé (ex. ADMIN=1) -> 409
+DELETE {{baseUrl}}/roles/1
+Authorization: Bearer {{token}}

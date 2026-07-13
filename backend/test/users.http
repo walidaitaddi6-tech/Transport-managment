@@ -1,0 +1,60 @@
+### Tests manuels du module Utilisateurs (token ADMIN requis)
+
+@baseUrl = http://localhost:3000/api
+
+### Login admin
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "admin@transport.ma", "password": "Passw0rd!" }
+
+@token = {{login.response.body.accessToken}}
+
+### Lister (pagination + recherche + filtre statut)
+GET {{baseUrl}}/users?page=1&limit=10&search=&sortBy=id&sortOrder=asc
+Authorization: Bearer {{token}}
+
+### Créer
+# @name create
+POST {{baseUrl}}/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "nom": "Nadia Fassi",
+  "email": "nadia@transport.ma",
+  "telephone": "+212600000099",
+  "motDePasse": "Passw0rd!",
+  "idRole": 2,
+  "statut": "ACTIF"
+}
+
+### Créer avec e-mail existant -> 409
+POST {{baseUrl}}/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "nom": "Doublon", "email": "nadia@transport.ma", "motDePasse": "Passw0rd!", "idRole": 2 }
+
+### Créer avec rôle inexistant -> 400
+POST {{baseUrl}}/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "nom": "X", "email": "x@transport.ma", "motDePasse": "Passw0rd!", "idRole": 9999 }
+
+### Détail
+GET {{baseUrl}}/users/{{create.response.body.id}}
+Authorization: Bearer {{token}}
+
+### Modifier (sans changer le mot de passe)
+PATCH {{baseUrl}}/users/{{create.response.body.id}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "telephone": "+212611111111", "statut": "SUSPENDU" }
+
+### Supprimer
+DELETE {{baseUrl}}/users/{{create.response.body.id}}
+Authorization: Bearer {{token}}
