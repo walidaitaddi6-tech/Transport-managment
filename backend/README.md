@@ -44,7 +44,7 @@ backend/
 npm install
 
 # 2. Configurer l'environnement
-cp .env.example .env   # puis adapter DATABASE_URL et les secrets JWT
+copy .env.example .env   # puis adapter DATABASE_URL et les secrets JWT
 
 # 3. Lancer PostgreSQL (via Docker) ou utiliser une instance existante
 docker compose up -d postgres
