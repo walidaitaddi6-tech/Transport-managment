@@ -9,12 +9,14 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
+// Profils applicatifs (rôles). ADMIN_GENERAL = super-administrateur (gère les utilisateurs).
 const ROLES: { nom: string; description: string }[] = [
-  { nom: 'ADMIN', description: 'Administrateur système, accès total' },
-  { nom: 'GESTIONNAIRE', description: 'Gestion opérationnelle : voyages, véhicules, conducteurs, clients' },
-  { nom: 'COMPTABLE', description: 'Facturation, créances, dettes et comptabilité' },
-  { nom: 'OPERATEUR', description: 'Saisie et suivi des voyages' },
-  { nom: 'CONDUCTEUR', description: 'Application mobile conducteur' },
+  { nom: 'ADMIN_GENERAL', description: 'Administrateur Général — accès total, gère les utilisateurs et leurs permissions' },
+  { nom: 'ADMINISTRATEUR', description: 'Administrateur — accès étendu (hors gestion des utilisateurs)' },
+  { nom: 'EXPLOITANT', description: 'Exploitation : voyages, véhicules, conducteurs, clients, documents' },
+  { nom: 'COMPTABLE', description: 'Comptabilité : factures, créances, dettes, paiements' },
+  { nom: 'CHAUFFEUR', description: 'Chauffeur : consultation des voyages et saisies terrain' },
+  { nom: 'PERSONNALISE', description: 'Profil personnalisé — permissions définies au cas par cas' },
 ];
 
 async function main() {
@@ -29,36 +31,33 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(`Seed terminé : ${ROLES.length} rôles garantis.`);
 
-  // 2. Garantir l'administrateur par défaut
-  const adminEmail = 'admin@transport.com';
-  const existingAdmin = await prisma.user.findUnique({
-    where: { email: adminEmail },
-  });
-
-  if (!existingAdmin) {
-    const adminRole = await prisma.role.findUnique({
-      where: { nom: 'ADMIN' },
-    });
-    if (!adminRole) {
-      throw new Error("Rôle ADMIN introuvable dans la base de données.");
-    }
-
-    const hashedPassword = await bcrypt.hash('Admin123!', 10);
-    await prisma.user.create({
-      data: {
-        nom: 'Administrateur',
-        email: adminEmail,
-        motDePasse: hashedPassword,
-        idRole: adminRole.id,
-        statut: 'ACTIF',
-      },
-    });
-    // eslint-disable-next-line no-console
-    console.log(`Utilisateur administrateur créé : ${adminEmail}`);
-  } else {
-    // eslint-disable-next-line no-console
-    console.log(`L'utilisateur administrateur existe déjà : ${adminEmail}`);
+  // 2. Garantir l'Administrateur Général (accès total à toute l'application).
+  //    upsert => crée le compte s'il n'existe pas, sinon corrige rôle/statut/mot de passe.
+  const adminEmail = 'walidaitaddi6@gmail.com';
+  const adminRole = await prisma.role.findUnique({ where: { nom: 'ADMIN_GENERAL' } });
+  if (!adminRole) {
+    throw new Error("Rôle ADMIN_GENERAL introuvable dans la base de données.");
   }
+
+  const hashedPassword = await bcrypt.hash('oualid200210', 10);
+  await prisma.user.upsert({
+    where: { email: adminEmail },
+    update: {
+      nom: 'Oualid',
+      idRole: adminRole.id,
+      statut: 'ACTIF',
+      motDePasse: hashedPassword,
+    },
+    create: {
+      nom: 'Oualid',
+      email: adminEmail,
+      motDePasse: hashedPassword,
+      idRole: adminRole.id,
+      statut: 'ACTIF',
+    },
+  });
+  // eslint-disable-next-line no-console
+  console.log(`Administrateur Général garanti : ${adminEmail} (profil ADMIN_GENERAL)`);
 }
 
 main()

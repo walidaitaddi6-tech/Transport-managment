@@ -1,3 +1,5 @@
+import type { PermissionsMatrix } from '../../constants/permissions';
+
 export type UserStatut = 'ACTIF' | 'INACTIF' | 'SUSPENDU';
 
 export interface UserRoleRef {
@@ -11,6 +13,7 @@ export interface User {
   email: string;
   telephone: string | null;
   statut: UserStatut;
+  permissions: PermissionsMatrix | null;
   derniereConnexion: string | null;
   creeLe: string;
   idRole: number;
@@ -45,6 +48,15 @@ export interface CreateUserPayload {
   motDePasse: string;
   idRole: number;
   statut?: UserStatut;
+  permissions?: PermissionsMatrix;
 }
 
 export type UpdateUserPayload = Partial<CreateUserPayload>;
+
+export interface UsersStats {
+  total: number;
+  actifs: number;
+  inactifs: number;
+  suspendus: number;
+  parProfil: { profil: string; count: number }[];
+}

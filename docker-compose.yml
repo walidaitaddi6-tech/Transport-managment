@@ -1,0 +1,28 @@
+# ============================================================
+#  PostgreSQL (compatible Prisma) — environnement de développement
+#  À lancer depuis la RACINE du projet :  docker compose up -d
+#
+#  Les valeurs par défaut correspondent EXACTEMENT à
+#  backend/.env -> DATABASE_URL=postgresql://transport:transport@localhost:5432/transport_db
+# ============================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: transport_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-transport}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-transport}
+      POSTGRES_DB: ${POSTGRES_DB:-transport_db}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - transport_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-transport} -d ${POSTGRES_DB:-transport_db}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  transport_pgdata:

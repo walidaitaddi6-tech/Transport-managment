@@ -136,6 +136,7 @@ model User {
   motDePasse        String      @map("mot_de_passe") @db.VarChar(255)
   idRole            Int         @map("id_role")
   statut            UserStatut  @default(ACTIF)
+  permissions       Json?
   derniereConnexion DateTime?   @map("derniere_connexion") @db.Timestamptz(6)
   creeLe            DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
 

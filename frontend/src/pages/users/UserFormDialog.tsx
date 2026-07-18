@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -8,12 +8,20 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   MenuItem,
   Stack,
   TextField,
 } from '@mui/material';
 import type { CreateUserPayload, User, UserStatut } from '../../features/users/types';
 import { useRoleOptions } from '../../features/roles/useRoles';
+import {
+  PROFILE_LABELS,
+  PROFILE_PERSONNALISE,
+  emptyMatrix,
+  type PermissionsMatrix,
+} from '../../constants/permissions';
+import { PermissionsEditor } from './PermissionsEditor';
 
 const STATUTS: UserStatut[] = ['ACTIF', 'INACTIF', 'SUSPENDU'];
 
@@ -28,20 +36,26 @@ interface UserFormDialogProps {
 export function UserFormDialog({ open, user, loading, onClose, onSubmit }: UserFormDialogProps) {
   const isEdit = Boolean(user);
   const { data: roles = [] } = useRoleOptions();
+  const [permissions, setPermissions] = useState<PermissionsMatrix>(emptyMatrix());
 
-  // Le mot de passe est requis en création, optionnel en modification.
   const schema = useMemo(
     () =>
-      z.object({
-        nom: z.string().min(1, 'Le nom est requis').max(120),
-        email: z.string().min(1, 'E-mail requis').email('E-mail invalide'),
-        telephone: z.string().max(30).optional().or(z.literal('')),
-        motDePasse: isEdit
-          ? z.string().max(72).optional().or(z.literal(''))
-          : z.string().min(6, 'Au moins 6 caractères').max(72),
-        idRole: z.coerce.number().int().min(1, 'Le rôle est requis'),
-        statut: z.enum(['ACTIF', 'INACTIF', 'SUSPENDU']),
-      }),
+      z
+        .object({
+          nom: z.string().min(1, 'Le nom est requis').max(120),
+          telephone: z.string().max(30).optional().or(z.literal('')),
+          email: z.string().min(1, 'E-mail requis').email('E-mail invalide'),
+          motDePasse: isEdit
+            ? z.string().max(72).optional().or(z.literal(''))
+            : z.string().min(6, 'Au moins 6 caractères').max(72),
+          confirmation: z.string().optional().or(z.literal('')),
+          idRole: z.coerce.number().int().min(1, 'Le profil est requis'),
+          statut: z.enum(['ACTIF', 'INACTIF', 'SUSPENDU']),
+        })
+        .refine((v) => !v.motDePasse || v.motDePasse === v.confirmation, {
+          message: 'La confirmation ne correspond pas',
+          path: ['confirmation'],
+        }),
     [isEdit],
   );
 
@@ -52,24 +66,39 @@ export function UserFormDialog({ open, user, loading, onClose, onSubmit }: UserF
     handleSubmit,
     reset,
     control,
+    watch,
     formState: { errors },
   } = useForm<UserForm>({
     resolver: zodResolver(schema),
-    defaultValues: { nom: '', email: '', telephone: '', motDePasse: '', idRole: 0, statut: 'ACTIF' },
+    defaultValues: {
+      nom: '',
+      telephone: '',
+      email: '',
+      motDePasse: '',
+      confirmation: '',
+      idRole: 0,
+      statut: 'ACTIF',
+    },
   });
 
   useEffect(() => {
     if (open) {
       reset({
         nom: user?.nom ?? '',
-        email: user?.email ?? '',
         telephone: user?.telephone ?? '',
+        email: user?.email ?? '',
         motDePasse: '',
+        confirmation: '',
         idRole: user?.idRole ?? 0,
         statut: user?.statut ?? 'ACTIF',
       });
+      setPermissions({ ...emptyMatrix(), ...(user?.permissions ?? {}) });
     }
   }, [open, user, reset]);
+
+  const selectedRoleId = watch('idRole');
+  const selectedRoleName = roles.find((r) => r.id === Number(selectedRoleId))?.nom;
+  const isPersonnalise = selectedRoleName === PROFILE_PERSONNALISE;
 
   const submit = (values: UserForm) => {
     const payload: CreateUserPayload = {
@@ -78,22 +107,25 @@ export function UserFormDialog({ open, user, loading, onClose, onSubmit }: UserF
       telephone: values.telephone?.trim() ? values.telephone.trim() : undefined,
       idRole: values.idRole,
       statut: values.statut,
-      // Mot de passe : envoyé seulement s'il est renseigné.
       motDePasse: values.motDePasse ?? '',
     };
     if (isEdit && !values.motDePasse) {
       delete (payload as Partial<CreateUserPayload>).motDePasse;
     }
+    if (isPersonnalise) {
+      payload.permissions = permissions;
+    }
     onSubmit(payload);
   };
 
   const { ref: nomRef, ...nomField } = register('nom');
-  const { ref: emailRef, ...emailField } = register('email');
   const { ref: telRef, ...telField } = register('telephone');
+  const { ref: emailRef, ...emailField } = register('email');
   const { ref: pwdRef, ...pwdField } = register('motDePasse');
+  const { ref: confRef, ...confField } = register('confirmation');
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth={isPersonnalise ? 'md' : 'sm'} fullWidth>
       <DialogTitle>{isEdit ? 'Modifier l’utilisateur' : 'Nouvel utilisateur'}</DialogTitle>
       <form onSubmit={handleSubmit(submit)} noValidate>
         <DialogContent>
@@ -108,15 +140,6 @@ export function UserFormDialog({ open, user, loading, onClose, onSubmit }: UserF
               {...nomField}
             />
             <TextField
-              label="E-mail"
-              type="email"
-              fullWidth
-              error={Boolean(errors.email)}
-              helperText={errors.email?.message}
-              inputRef={emailRef}
-              {...emailField}
-            />
-            <TextField
               label="Téléphone"
               fullWidth
               error={Boolean(errors.telephone)}
@@ -125,52 +148,82 @@ export function UserFormDialog({ open, user, loading, onClose, onSubmit }: UserF
               {...telField}
             />
             <TextField
-              label={isEdit ? 'Mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe'}
-              type="password"
+              label="E-mail"
+              type="email"
               fullWidth
-              autoComplete="new-password"
-              error={Boolean(errors.motDePasse)}
-              helperText={errors.motDePasse?.message}
-              inputRef={pwdRef}
-              {...pwdField}
+              error={Boolean(errors.email)}
+              helperText={errors.email?.message}
+              inputRef={emailRef}
+              {...emailField}
             />
-            <Controller
-              name="idRole"
-              control={control}
-              render={({ field }) => (
-                <TextField
-                  select
-                  label="Rôle"
-                  fullWidth
-                  error={Boolean(errors.idRole)}
-                  helperText={errors.idRole?.message}
-                  {...field}
-                  value={field.value || ''}
-                >
-                  <MenuItem value="" disabled>
-                    — Sélectionner —
-                  </MenuItem>
-                  {roles.map((r) => (
-                    <MenuItem key={r.id} value={r.id}>
-                      {r.nom}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField
+                label={isEdit ? 'Mot de passe (vide = inchangé)' : 'Mot de passe'}
+                type="password"
+                fullWidth
+                autoComplete="new-password"
+                error={Boolean(errors.motDePasse)}
+                helperText={errors.motDePasse?.message}
+                inputRef={pwdRef}
+                {...pwdField}
+              />
+              <TextField
+                label="Confirmation"
+                type="password"
+                fullWidth
+                autoComplete="new-password"
+                error={Boolean(errors.confirmation)}
+                helperText={errors.confirmation?.message}
+                inputRef={confRef}
+                {...confField}
+              />
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <Controller
+                name="idRole"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    select
+                    label="Profil"
+                    fullWidth
+                    error={Boolean(errors.idRole)}
+                    helperText={errors.idRole?.message}
+                    {...field}
+                    value={field.value || ''}
+                  >
+                    <MenuItem value="" disabled>
+                      — Sélectionner —
                     </MenuItem>
-                  ))}
-                </TextField>
-              )}
-            />
-            <Controller
-              name="statut"
-              control={control}
-              render={({ field }) => (
-                <TextField select label="Statut" fullWidth {...field}>
-                  {STATUTS.map((s) => (
-                    <MenuItem key={s} value={s}>
-                      {s}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              )}
-            />
+                    {roles.map((r) => (
+                      <MenuItem key={r.id} value={r.id}>
+                        {PROFILE_LABELS[r.nom] ?? r.nom}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                )}
+              />
+              <Controller
+                name="statut"
+                control={control}
+                render={({ field }) => (
+                  <TextField select label="Statut" fullWidth {...field}>
+                    {STATUTS.map((s) => (
+                      <MenuItem key={s} value={s}>
+                        {s}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                )}
+              />
+            </Stack>
+
+            {isPersonnalise && (
+              <>
+                <Divider />
+                <PermissionsEditor value={permissions} onChange={setPermissions} />
+              </>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

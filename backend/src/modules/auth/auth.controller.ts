@@ -3,15 +3,11 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiOkResponse,
-  ApiCreatedResponse,
-  ApiConflictResponse,
-  ApiBadRequestResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthTokensDto } from './dto/auth-response.dto';
 import { Public } from './decorators/public.decorator';
@@ -22,16 +18,8 @@ import { CurrentUser } from './decorators/current-user.decorator';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Public()
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Inscription d’un nouvel utilisateur' })
-  @ApiCreatedResponse({ description: 'Utilisateur inscrit avec succès' })
-  @ApiConflictResponse({ description: 'E-mail déjà utilisé' })
-  @ApiBadRequestResponse({ description: 'Données invalides' })
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
-  }
+  // Note : aucune inscription publique — les comptes sont créés par
+  // l'Administrateur Général via le module Utilisateurs.
 
   @Public()
   @Post('login')

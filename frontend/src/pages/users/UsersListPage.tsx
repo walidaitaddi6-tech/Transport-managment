@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Chip,
+  Grid,
   IconButton,
   InputAdornment,
   LinearProgress,
@@ -24,21 +25,38 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
+import BlockIcon from '@mui/icons-material/Block';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { UserFormDialog } from './UserFormDialog';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import {
   useCreateUser,
   useDeleteUser,
   useUpdateUser,
+  useUserStats,
   useUsersQuery,
 } from '../../features/users/useUsers';
 import type { CreateUserPayload, User, UserStatut } from '../../features/users/types';
+import { PROFILE_LABELS } from '../../constants/permissions';
 
 const STATUT_COLOR: Record<UserStatut, 'success' | 'default' | 'warning'> = {
   ACTIF: 'success',
   INACTIF: 'default',
   SUSPENDU: 'warning',
 };
+
+function StatCard({ label, value, color }: { label: string; value: number; color?: string }) {
+  return (
+    <Paper sx={{ p: 2 }}>
+      <Typography variant="body2" color="text.secondary">
+        {label}
+      </Typography>
+      <Typography variant="h4" sx={{ mt: 0.5, color }}>
+        {value}
+      </Typography>
+    </Paper>
+  );
+}
 
 export function UsersListPage() {
   const [page, setPage] = useState(0);
@@ -70,6 +88,7 @@ export function UsersListPage() {
   );
 
   const { data, isLoading, isError, isFetching } = useUsersQuery(params);
+  const { data: stats } = useUserStats();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
@@ -94,6 +113,13 @@ export function UsersListPage() {
     }
   };
 
+  const toggleStatut = (user: User) => {
+    updateUser.mutate({
+      id: user.id,
+      payload: { statut: user.statut === 'ACTIF' ? 'INACTIF' : 'ACTIF' },
+    });
+  };
+
   const handleDelete = () => {
     if (!toDelete) return;
     deleteUser.mutate(toDelete.id, { onSuccess: () => setToDelete(null) });
@@ -110,9 +136,25 @@ export function UsersListPage() {
       >
         <Typography variant="h4">Utilisateurs</Typography>
         <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
-          Nouvel utilisateur
+          Ajouter un utilisateur
         </Button>
       </Stack>
+
+      {/* Mini tableau de bord */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={6} md={3}>
+          <StatCard label="Total" value={stats?.total ?? 0} />
+        </Grid>
+        <Grid item xs={6} md={3}>
+          <StatCard label="Actifs" value={stats?.actifs ?? 0} color="success.main" />
+        </Grid>
+        <Grid item xs={6} md={3}>
+          <StatCard label="Inactifs" value={stats?.inactifs ?? 0} color="text.secondary" />
+        </Grid>
+        <Grid item xs={6} md={3}>
+          <StatCard label="Suspendus" value={stats?.suspendus ?? 0} color="warning.main" />
+        </Grid>
+      </Grid>
 
       <Paper>
         <Box sx={{ p: 2 }}>
@@ -147,9 +189,9 @@ export function UsersListPage() {
                   <TableCell>Nom</TableCell>
                   <TableCell>E-mail</TableCell>
                   <TableCell>Téléphone</TableCell>
-                  <TableCell>Rôle</TableCell>
+                  <TableCell>Profil</TableCell>
                   <TableCell>Statut</TableCell>
-                  <TableCell align="right" width={120}>
+                  <TableCell align="right" width={150}>
                     Actions
                   </TableCell>
                 </TableRow>
@@ -168,11 +210,20 @@ export function UsersListPage() {
                       <TableCell>{user.nom}</TableCell>
                       <TableCell>{user.email}</TableCell>
                       <TableCell>{user.telephone ?? '—'}</TableCell>
-                      <TableCell>{user.role?.nom ?? '—'}</TableCell>
+                      <TableCell>{PROFILE_LABELS[user.role?.nom] ?? user.role?.nom ?? '—'}</TableCell>
                       <TableCell>
                         <Chip size="small" label={user.statut} color={STATUT_COLOR[user.statut]} />
                       </TableCell>
                       <TableCell align="right">
+                        <Tooltip title={user.statut === 'ACTIF' ? 'Désactiver' : 'Activer'}>
+                          <IconButton size="small" onClick={() => toggleStatut(user)}>
+                            {user.statut === 'ACTIF' ? (
+                              <BlockIcon fontSize="small" />
+                            ) : (
+                              <CheckCircleIcon fontSize="small" color="success" />
+                            )}
+                          </IconButton>
+                        </Tooltip>
                         <Tooltip title="Modifier">
                           <IconButton size="small" onClick={() => openEdit(user)}>
                             <EditIcon fontSize="small" />

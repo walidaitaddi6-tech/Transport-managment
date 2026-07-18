@@ -3,14 +3,14 @@
 
 @baseUrl = http://localhost:3000/api
 
-### 1. Login OK (compte admin de démo — mot de passe: Passw0rd!)
+### 1. Login OK (compte admin de démo — mot de passe: Admin123!)
 # @name login
 POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "email": "admin@transport.ma",
-  "password": "Passw0rd!"
+  "email": "admin@transport.com",
+  "password": "Admin123!"
 }
 
 ### 2. Login KO (mauvais mot de passe) -> 401
@@ -18,7 +18,7 @@ POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "email": "admin@transport.ma",
+  "email": "admin@transport.com",
   "password": "mauvais"
 }
 
@@ -42,7 +42,7 @@ Content-Type: application/json
 #
 # TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
 #   -H "Content-Type: application/json" \
-#   -d '{"email":"admin@transport.ma","password":"Passw0rd!"}' | jq -r .accessToken)
+#   -d '{"email":"admin@transport.com","password":"Admin123!"}' | jq -r .accessToken)
 #
 # curl -s http://localhost:3000/api/auth/me -H "Authorization: Bearer $TOKEN"
 # ------------------------------------------------------------------
