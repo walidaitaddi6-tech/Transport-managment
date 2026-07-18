@@ -71,6 +71,8 @@ export const PROFILE_LABELS: Record<string, string> = {
   COMPTABLE: 'Comptable',
   CHAUFFEUR: 'Chauffeur',
   PERSONNALISE: 'Personnalisé',
+  ADMIN: 'Administrateur',
+  GESTIONNAIRE: 'Gestionnaire',
 };
 
 export const PROFILE_PERSONNALISE = 'PERSONNALISE';

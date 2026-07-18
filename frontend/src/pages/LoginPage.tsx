@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, Link as RouterLink } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -10,6 +10,7 @@ import {
   IconButton,
   InputAdornment,
   TextField,
+  Link,
 } from '@mui/material';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
@@ -107,11 +108,16 @@ export function LoginPage() {
           fullWidth
           size="large"
           disabled={login.isPending}
-          sx={{ mt: 3 }}
+          sx={{ mt: 3, mb: 2 }}
           startIcon={login.isPending ? <CircularProgress size={18} color="inherit" /> : undefined}
         >
           {login.isPending ? 'Connexion…' : 'Se connecter'}
         </Button>
+        <Box sx={{ textAlign: 'center', mt: 1 }}>
+          <Link component={RouterLink} to="/register" variant="body2">
+            Pas encore de compte ? S'inscrire
+          </Link>
+        </Box>
       </Box>
     </AuthLayout>
   );

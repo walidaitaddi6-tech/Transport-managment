@@ -63,6 +63,8 @@ export const PROFILES = [
   'COMPTABLE',
   'CHAUFFEUR',
   'PERSONNALISE',
+  'ADMIN',
+  'GESTIONNAIRE',
 ] as const;
 
 export type ProfileName = (typeof PROFILES)[number];
@@ -205,9 +207,10 @@ function chauffeurDefaults(): PermissionsMatrix {
   return m;
 }
 
-export const PROFILE_DEFAULTS: Record<Exclude<ProfileName, 'ADMIN_GENERAL'>, PermissionsMatrix> = {
+export const PROFILE_DEFAULTS: Record<Exclude<ProfileName, 'ADMIN_GENERAL' | 'ADMIN'>, PermissionsMatrix> = {
   ADMINISTRATEUR: administrateurDefaults(),
   EXPLOITANT: exploitantDefaults(),
+  GESTIONNAIRE: exploitantDefaults(),
   COMPTABLE: comptableDefaults(),
   CHAUFFEUR: chauffeurDefaults(),
   PERSONNALISE: emptyMatrix(),
@@ -215,7 +218,7 @@ export const PROFILE_DEFAULTS: Record<Exclude<ProfileName, 'ADMIN_GENERAL'>, Per
 
 /**
  * Calcule la matrice EFFECTIVE d'un utilisateur.
- * - ADMIN_GENERAL : accès total.
+ * - ADMIN_GENERAL / ADMIN : accès total.
  * - permissions stockées (non nulles) : utilisées telles quelles (profil Personnalisé ou override).
  * - sinon : valeurs par défaut du profil.
  */
@@ -223,12 +226,12 @@ export function computeEffectivePermissions(
   roleName: string,
   stored: unknown,
 ): PermissionsMatrix {
-  if (roleName === 'ADMIN_GENERAL') {
+  if (roleName === 'ADMIN_GENERAL' || roleName === 'ADMIN') {
     return fullMatrix();
   }
   if (stored && typeof stored === 'object' && Object.keys(stored as object).length > 0) {
     return normalizeMatrix(stored);
   }
-  const defaults = PROFILE_DEFAULTS[roleName as Exclude<ProfileName, 'ADMIN_GENERAL'>];
+  const defaults = PROFILE_DEFAULTS[roleName as Exclude<ProfileName, 'ADMIN_GENERAL' | 'ADMIN'>];
   return defaults ? defaults : emptyMatrix();
 }
