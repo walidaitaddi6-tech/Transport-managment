@@ -7,7 +7,7 @@
 POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
-{ "email": "admin@transport.ma", "password": "Passw0rd!" }
+{ "email": "admin@transport.com", "password": "Admin123!" }
 
 @token = {{login.response.body.accessToken}}
 
@@ -25,7 +25,7 @@ Content-Type: application/json
   "nom": "Nadia Fassi",
   "email": "nadia@transport.ma",
   "telephone": "+212600000099",
-  "motDePasse": "Passw0rd!",
+  "motDePasse": "Admin123!",
   "idRole": 2,
   "statut": "ACTIF"
 }
@@ -35,14 +35,14 @@ POST {{baseUrl}}/users
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
-{ "nom": "Doublon", "email": "nadia@transport.ma", "motDePasse": "Passw0rd!", "idRole": 2 }
+{ "nom": "Doublon", "email": "nadia@transport.ma", "motDePasse": "Admin123!", "idRole": 2 }
 
 ### Créer avec rôle inexistant -> 400
 POST {{baseUrl}}/users
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
-{ "nom": "X", "email": "x@transport.ma", "motDePasse": "Passw0rd!", "idRole": 9999 }
+{ "nom": "X", "email": "x@transport.ma", "motDePasse": "Admin123!", "idRole": 9999 }
 
 ### Détail
 GET {{baseUrl}}/users/{{create.response.body.id}}

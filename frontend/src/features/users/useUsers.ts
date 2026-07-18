@@ -8,10 +8,21 @@ const USERS_KEY = 'users';
 
 export function useUsersQuery(params: UsersQueryParams) {
   return useQuery({
-    queryKey: [USERS_KEY, params],
+    queryKey: [USERS_KEY, 'list', params],
     queryFn: () => usersApi.list(params),
     placeholderData: (prev) => prev,
   });
+}
+
+export function useUserStats() {
+  return useQuery({
+    queryKey: [USERS_KEY, 'stats'],
+    queryFn: () => usersApi.stats(),
+  });
+}
+
+function invalidate(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: [USERS_KEY] });
 }
 
 export function useCreateUser() {
@@ -20,7 +31,7 @@ export function useCreateUser() {
     mutationFn: (payload: CreateUserPayload) => usersApi.create(payload),
     onSuccess: () => {
       notify.success('Utilisateur créé avec succès.');
-      qc.invalidateQueries({ queryKey: [USERS_KEY] });
+      invalidate(qc);
     },
     onError: (error) => notify.error(getApiErrorMessage(error, 'Création impossible')),
   });
@@ -33,7 +44,7 @@ export function useUpdateUser() {
       usersApi.update(id, payload),
     onSuccess: () => {
       notify.success('Utilisateur modifié avec succès.');
-      qc.invalidateQueries({ queryKey: [USERS_KEY] });
+      invalidate(qc);
     },
     onError: (error) => notify.error(getApiErrorMessage(error, 'Modification impossible')),
   });
@@ -45,7 +56,7 @@ export function useDeleteUser() {
     mutationFn: (id: number) => usersApi.remove(id),
     onSuccess: () => {
       notify.success('Utilisateur supprimé.');
-      qc.invalidateQueries({ queryKey: [USERS_KEY] });
+      invalidate(qc);
     },
     onError: (error) => notify.error(getApiErrorMessage(error, 'Suppression impossible')),
   });

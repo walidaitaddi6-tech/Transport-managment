@@ -25,17 +25,23 @@ import { Roles } from '../auth/decorators/roles.decorator';
 
 @ApiTags('Utilisateurs')
 @ApiBearerAuth()
+@Roles('ADMIN_GENERAL')
 @Controller('users')
 export class UsersController {
   constructor(private readonly service: UsersService) {}
 
   @Post()
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'Créer un utilisateur' })
+  @ApiOperation({ summary: 'Créer un utilisateur (Administrateur Général uniquement)' })
   @ApiConflictResponse({ description: 'E-mail déjà utilisé' })
   @ApiBadRequestResponse({ description: 'Rôle inexistant / données invalides' })
   create(@Body() dto: CreateUserDto) {
     return this.service.create(dto);
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Statistiques des utilisateurs (mini tableau de bord)' })
+  stats() {
+    return this.service.findStats();
   }
 
   @Get()
@@ -52,7 +58,6 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles('ADMIN')
   @ApiOperation({ summary: 'Modifier un utilisateur' })
   @ApiNotFoundResponse({ description: 'Utilisateur introuvable' })
   @ApiConflictResponse({ description: 'E-mail déjà utilisé' })
@@ -61,7 +66,6 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @Roles('ADMIN')
   @ApiOperation({ summary: 'Supprimer un utilisateur' })
   @ApiNotFoundResponse({ description: 'Utilisateur introuvable' })
   remove(@Param('id', ParseIntPipe) id: number) {

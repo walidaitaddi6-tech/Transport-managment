@@ -7,7 +7,7 @@
 POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
-{ "email": "admin@transport.ma", "password": "Passw0rd!" }
+{ "email": "admin@transport.com", "password": "Admin123!" }
 
 @token = {{login.response.body.accessToken}}
 

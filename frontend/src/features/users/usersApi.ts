@@ -5,11 +5,17 @@ import type {
   UpdateUserPayload,
   User,
   UsersQueryParams,
+  UsersStats,
 } from './types';
 
 export const usersApi = {
   async list(params: UsersQueryParams): Promise<PaginatedUsers> {
     const { data } = await api.get<PaginatedUsers>('/users', { params });
+    return data;
+  },
+
+  async stats(): Promise<UsersStats> {
+    const { data } = await api.get<UsersStats>('/users/stats');
     return data;
   },
 

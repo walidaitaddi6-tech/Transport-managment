@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { buildPaginationMeta, type PaginatedResult } from '../../common/dto/paginated-result';
+import { normalizeMatrix } from '../../common/permissions/permissions';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUserDto } from './dto/query-user.dto';
@@ -21,6 +22,7 @@ const userSelect = {
   email: true,
   telephone: true,
   statut: true,
+  permissions: true,
   derniereConnexion: true,
   creeLe: true,
   idRole: true,
@@ -28,6 +30,14 @@ const userSelect = {
 } satisfies Prisma.UserSelect;
 
 type UserView = Prisma.UserGetPayload<{ select: typeof userSelect }>;
+
+export interface UsersStats {
+  total: number;
+  actifs: number;
+  inactifs: number;
+  suspendus: number;
+  parProfil: { profil: string; count: number }[];
+}
 
 @Injectable()
 export class UsersService {
@@ -43,6 +53,9 @@ export class UsersService {
       idRole: dto.idRole,
       statut: dto.statut,
     };
+    if (dto.permissions !== undefined) {
+      data.permissions = normalizeMatrix(dto.permissions) as unknown as Prisma.InputJsonValue;
+    }
     try {
       return await this.prisma.user.create({ data, select: userSelect });
     } catch (error) {
@@ -83,6 +96,29 @@ export class UsersService {
     return { data, meta: buildPaginationMeta(total, page, limit) };
   }
 
+  /**
+   * Statistiques pour le mini tableau de bord de la page Utilisateurs.
+   * (Simples `count` — sans groupBy — pour un typage stable avec Prisma.)
+   */
+  async findStats(): Promise<UsersStats> {
+    const [total, actifs, inactifs, suspendus, roles] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { statut: 'ACTIF' } }),
+      this.prisma.user.count({ where: { statut: 'INACTIF' } }),
+      this.prisma.user.count({ where: { statut: 'SUSPENDU' } }),
+      this.prisma.role.findMany({ select: { id: true, nom: true } }),
+    ]);
+
+    const parProfil = await Promise.all(
+      roles.map(async (r) => ({
+        profil: r.nom,
+        count: await this.prisma.user.count({ where: { idRole: r.id } }),
+      })),
+    );
+
+    return { total, actifs, inactifs, suspendus, parProfil };
+  }
+
   async findOne(id: number): Promise<UserView> {
     const user = await this.prisma.user.findUnique({ where: { id }, select: userSelect });
     if (!user) {
@@ -93,10 +129,13 @@ export class UsersService {
 
   async update(id: number, dto: UpdateUserDto): Promise<UserView> {
     await this.findOne(id);
-    const { motDePasse, ...rest } = dto;
+    const { motDePasse, permissions, ...rest } = dto;
     const data: Prisma.UserUncheckedUpdateInput = { ...rest };
     if (motDePasse) {
       data.motDePasse = await bcrypt.hash(motDePasse, SALT_ROUNDS);
+    }
+    if (permissions !== undefined) {
+      data.permissions = normalizeMatrix(permissions) as unknown as Prisma.InputJsonValue;
     }
     try {
       return await this.prisma.user.update({ where: { id }, data, select: userSelect });

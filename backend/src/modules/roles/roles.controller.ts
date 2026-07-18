@@ -29,7 +29,7 @@ export class RolesController {
   constructor(private readonly service: RolesService) {}
 
   @Post()
-  @Roles('ADMIN')
+  @Roles('ADMIN_GENERAL')
   @ApiOperation({ summary: 'Créer un rôle' })
   @ApiConflictResponse({ description: 'Nom de rôle déjà existant' })
   create(@Body() dto: CreateRoleDto) {
@@ -50,7 +50,7 @@ export class RolesController {
   }
 
   @Patch(':id')
-  @Roles('ADMIN')
+  @Roles('ADMIN_GENERAL')
   @ApiOperation({ summary: 'Modifier un rôle' })
   @ApiNotFoundResponse({ description: 'Rôle introuvable' })
   @ApiConflictResponse({ description: 'Nom de rôle déjà existant' })
@@ -59,7 +59,7 @@ export class RolesController {
   }
 
   @Delete(':id')
-  @Roles('ADMIN')
+  @Roles('ADMIN_GENERAL')
   @ApiOperation({ summary: 'Supprimer un rôle' })
   @ApiNotFoundResponse({ description: 'Rôle introuvable' })
   @ApiConflictResponse({ description: 'Rôle utilisé par des utilisateurs' })
