@@ -5,7 +5,7 @@ import { notify } from '../../utils/notify';
 import { emptyMatrix, type PermissionAction } from '../../constants/permissions';
 import { authApi } from './authApi';
 import { clearAuth, setUser } from './authSlice';
-import type { AuthTokens, LoginPayload } from './types';
+import type { AuthTokens, LoginPayload, RegisterPayload } from './types';
 
 /** État d'authentification + actions (login/logout/permissions). */
 export function useAuth() {
@@ -49,7 +49,7 @@ export function useLogin() {
       dispatch(
         setUser({
           ...data.user,
-          isAdminGeneral: data.user.role === 'ADMIN_GENERAL',
+          isAdminGeneral: data.user.role === 'ADMIN_GENERAL' || data.user.role === 'ADMIN',
           permissions: emptyMatrix(),
         }),
       );
@@ -61,5 +61,12 @@ export function useLogin() {
         /* le profil minimal reste actif */
       }
     },
+  });
+}
+
+/** Mutation React Query pour l'inscription. */
+export function useRegister() {
+  return useMutation<void, unknown, RegisterPayload>({
+    mutationFn: (payload) => authApi.register(payload),
   });
 }

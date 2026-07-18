@@ -25,4 +25,10 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface RegisterPayload {
+  nom: string;
+  email: string;
+  password: string;
+}
+
 export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'unauthenticated';

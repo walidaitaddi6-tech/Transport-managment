@@ -17,8 +17,9 @@ routes protégées, RBAC) et servira de base à tous les modules métier.
 ## Démarrage
 
 ```bash
+cd frontend
 npm install
-cp .env.example .env     # VITE_API_URL=http://localhost:3000/api
+copy .env.example .env    # VITE_API_URL=http://localhost:3000/api
 npm run dev              # http://localhost:5173
 ```
 
