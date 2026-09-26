@@ -20,10 +20,17 @@ import { DepensesAdministrativesModule } from './modules/depenses-administrative
 import { FacturesModule } from './modules/factures/factures.module';
 import { CreancesClientsModule } from './modules/creances-clients/creances-clients.module';
 import { PaiementsClientsModule } from './modules/paiements-clients/paiements-clients.module';
+import { ForexModule } from './modules/forex/forex.module';
 import { FournisseursModule } from './modules/fournisseurs/fournisseurs.module';
 import { DettesFournisseursModule } from './modules/dettes-fournisseurs/dettes-fournisseurs.module';
 import { PaiementsFournisseursModule } from './modules/paiements-fournisseurs/paiements-fournisseurs.module';
 import { GestionPaiementsModule } from './modules/gestion-paiements/gestion-paiements.module';
+
+import { CompanySettingsModule } from './modules/company-settings/company-settings.module';
+import { CompanyProvisioningModule } from './modules/company-provisioning/company-provisioning.module';
+import { EmployesModule } from './modules/employes/employes.module';
+import { PaiementsEmployesModule } from './modules/paiements-employes/paiements-employes.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -34,6 +41,7 @@ import { GestionPaiementsModule } from './modules/gestion-paiements/gestion-paie
     }),
     PrismaModule,
     AuthModule,
+    DashboardModule,
 
     // Modules métier
     UsersModule,
@@ -50,10 +58,15 @@ import { GestionPaiementsModule } from './modules/gestion-paiements/gestion-paie
     FacturesModule,
     CreancesClientsModule,
     PaiementsClientsModule,
+    ForexModule,
     FournisseursModule,
     DettesFournisseursModule,
     PaiementsFournisseursModule,
     GestionPaiementsModule,
+    CompanySettingsModule,
+    CompanyProvisioningModule,
+    EmployesModule,
+    PaiementsEmployesModule,
   ],
 })
 export class AppModule {}
