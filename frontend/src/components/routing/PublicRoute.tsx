@@ -1,6 +1,6 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../features/auth/useAuth';
-import { FullScreenLoader } from '../feedback/Loader';
+import { FullScreenLoader } from '../shared';
 
 /**
  * Routes publiques (ex. /login).
@@ -13,7 +13,7 @@ export function PublicRoute() {
     return <FullScreenLoader label="Chargement…" />;
   }
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/app" replace />;
   }
   return <Outlet />;
 }

@@ -1,0 +1,149 @@
+import { ReactNode } from 'react';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import PeopleIcon from '@mui/icons-material/People';
+import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import DescriptionIcon from '@mui/icons-material/Description';
+import RouteIcon from '@mui/icons-material/Route';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import BuildIcon from '@mui/icons-material/Build';
+import BuildCircleIcon from '@mui/icons-material/BuildCircle';
+import OilBarrelIcon from '@mui/icons-material/OilBarrel';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import ReceiptIcon from '@mui/icons-material/Receipt';
+import PaymentsIcon from '@mui/icons-material/Payments';
+import StorefrontIcon from '@mui/icons-material/Storefront';
+import MoneyOffIcon from '@mui/icons-material/MoneyOff';
+import PaidIcon from '@mui/icons-material/Paid';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import BusinessIcon from '@mui/icons-material/Business';
+import BadgeIcon from '@mui/icons-material/Badge';
+import DirectionsBoatIcon from '@mui/icons-material/DirectionsBoat';
+
+import type { ModuleKey } from '../lib/permissions/types';
+import type { PermissionAction } from './permissions';
+
+export interface NavLeaf {
+  moduleKey: ModuleKey;
+  label: string;
+  to: string;
+  icon: ReactNode;
+  /** Permission action required to see this item. Defaults to 'voir' when absent. */
+  action?: PermissionAction;
+}
+
+export interface NavGroup {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  to: string;
+  children: NavLeaf[];
+}
+
+export type NavEntry = { kind: 'leaf'; leaf: NavLeaf } | { kind: 'group'; group: NavGroup };
+
+export interface NavSection {
+  id: string;
+  label: string;
+  items: NavEntry[];
+}
+
+/** Standalone Top Item: Tableau de bord */
+export const DASHBOARD_NAV_ITEM: NavLeaf = {
+  moduleKey: 'dashboard',
+  label: 'Tableau de bord',
+  to: '/app',
+  icon: <DashboardIcon />,
+};
+
+/** Functional Domain Navigation Sections */
+export const NAVIGATION_SECTIONS: NavSection[] = [
+  {
+    id: 'personnes',
+    label: 'PERSONNES',
+    items: [
+      { kind: 'leaf', leaf: { moduleKey: 'clients', label: 'Clients', to: '/clients', icon: <PeopleIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'fournisseurs', label: 'Fournisseurs', to: '/fournisseurs', icon: <StorefrontIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'utilisateurs', label: 'Utilisateurs', to: '/users', icon: <ManageAccountsIcon /> } },
+    ],
+  },
+  {
+    id: 'exploitation',
+    label: 'EXPLOITATION',
+    items: [
+      { kind: 'leaf', leaf: { moduleKey: 'voyages', label: 'Voyages', to: '/voyages', icon: <RouteIcon /> } },
+      {
+        kind: 'group',
+        group: {
+          id: 'vehicules',
+          label: 'Véhicules',
+          icon: <LocalShippingIcon />,
+          to: '/vehicules',
+          children: [
+            { moduleKey: 'vehicules', label: 'Liste des véhicules', to: '/vehicules/liste', icon: <DescriptionIcon /> },
+            { moduleKey: 'documents_vehicules', label: 'Documents véhicules', to: '/vehicules/documents', icon: <DescriptionIcon /> },
+          ],
+        },
+      },
+      { kind: 'leaf', leaf: { moduleKey: 'depenses_vehicules', label: 'Charges véhicules', to: '/charges-vehicules', icon: <BuildIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'carnet_entretien', label: 'Carnet d’entretien', to: '/carnet-entretien', icon: <BuildCircleIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'bons_carburant', label: 'Consommation gasoil', to: '/consommation-gasoil', icon: <LocalGasStationIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'stock_gasoil', label: 'Stock gasoil', to: '/stock-gasoil', icon: <OilBarrelIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'traversees_maritimes', label: 'Tanger Med', to: '/traversees-maritimes', icon: <DirectionsBoatIcon /> } },
+    ],
+  },
+  {
+    id: 'facturation',
+    label: 'FACTURATION',
+    items: [
+      { kind: 'leaf', leaf: { moduleKey: 'factures', label: 'Factures', to: '/factures', icon: <ReceiptIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'paiements_clients', label: 'Paiements clients', to: '/paiements-clients', icon: <PaymentsIcon /> } },
+    ],
+  },
+  {
+    id: 'fournisseurs',
+    label: 'FOURNISSEURS',
+    items: [
+      { kind: 'leaf', leaf: { moduleKey: 'dettes_fournisseurs', label: 'Dettes fournisseurs', to: '/dettes-fournisseurs', icon: <MoneyOffIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'paiements_fournisseurs', label: 'Règlements fournisseurs', to: '/paiements-fournisseurs', icon: <PaidIcon /> } },
+    ],
+  },
+  {
+    id: 'administration',
+    label: 'FINANCE',
+    items: [
+      { kind: 'leaf', leaf: { moduleKey: 'cheques_lettres_change', label: 'Suivi des chèques/LC', to: '/cheques-lettres-change', icon: <AccountBalanceIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'gestion_paiements', label: 'Trésorerie', to: '/gestion-paiements', icon: <AccountBalanceWalletIcon /> } },
+      { kind: 'leaf', leaf: { moduleKey: 'parametres_entreprise', label: 'Paramètres entreprise', to: '/parametres-entreprise', icon: <BusinessIcon /> } },
+    ],
+  },
+  {
+    id: 'rh',
+    label: 'RH',
+    items: [
+      { kind: 'leaf', leaf: { moduleKey: 'employes', label: 'Employés', to: '/employes', icon: <BadgeIcon /> } },
+      {
+        kind: 'group',
+        group: {
+          id: 'conducteurs',
+          label: 'Conducteurs',
+          icon: <AssignmentIndIcon />,
+          to: '/conducteurs',
+          children: [
+            { moduleKey: 'conducteurs', label: 'Liste des conducteurs', to: '/conducteurs/liste', icon: <DescriptionIcon /> },
+            { moduleKey: 'documents_conducteurs', label: 'Documents conducteurs', to: '/conducteurs/documents', icon: <DescriptionIcon /> },
+          ],
+        },
+      },
+      { kind: 'leaf', leaf: { moduleKey: 'paiements_employes', label: 'Paiements employés', to: '/paiements-employes', icon: <PaymentsIcon /> } },
+    ],
+  },
+];
+
+/** Flattened view of all navigation entries for backward compatibility and traversal */
+export const NAVIGATION_ITEMS: NavEntry[] = [
+  { kind: 'leaf', leaf: DASHBOARD_NAV_ITEM },
+  ...NAVIGATION_SECTIONS.flatMap((section) => section.items),
+];

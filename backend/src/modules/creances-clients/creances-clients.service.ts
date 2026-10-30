@@ -1,9 +1,523 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Prisma, CreanceStatut } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildPaginationMeta, type PaginatedResult } from '../../common/dto/paginated-result';
+import { QueryCreanceClientDto } from './dto/query-creance-client.dto';
+
+export interface CompactFactureForCreance {
+  id: number;
+  numeroFacture: string;
+  sousTotal: number;
+  montantTva: number;
+  montantTotal: number;
+  supprimeLe: string | null;
+}
+
+export interface CompactPaiementSummary {
+  id: number;
+  datePaiement: string;
+  montantRecu: number;
+  methodePaiement: string;
+}
+
+export interface CreanceView {
+  id: number;
+  numeroFacture: string;
+  nomClient: string;
+  dateEmission: string;
+  delaiPaiementJours: number;
+  montantFacture: number;
+  montantRecu: number;
+  solde: number;
+  dateEcheance: string | null;
+  statutPaiement: string;
+  estEnRetard?: boolean;
+  actionRecouvrement: string | null;
+  devise: string;
+  facture?: CompactFactureForCreance | null;
+  paiements?: CompactPaiementSummary[];
+}
+
+export interface CreanceStats {
+  totalCreances: number;
+  totalMontantFacture: number;
+  totalMontantRecu: number;
+  totalSolde: number;
+  nonPayesCount: number;
+  partielCount: number;
+  payesCount: number;
+  enRetardCount: number;
+}
+
+export function toCreanceView(creance: any): CreanceView {
+  const hasValidInvoice = Boolean(creance.facture && !creance.facture.supprimeLe);
+
+  let montantFacture: number;
+  if (hasValidInvoice) {
+    if (creance.facture.montantTotal !== undefined && creance.facture.montantTotal !== null) {
+      montantFacture = Number(creance.facture.montantTotal);
+    } else {
+      const st = Number(creance.facture.sousTotal ?? 0);
+      const tva = Number(creance.facture.montantTva ?? 0);
+      montantFacture = Math.round((st + tva) * 100) / 100;
+    }
+  } else {
+    montantFacture = Number(creance.montantFacture ?? 0);
+  }
+
+  const rawPaiementsList = Array.isArray(creance.facture?.paiements)
+    ? creance.facture.paiements
+    : Array.isArray(creance.paiements)
+      ? creance.paiements
+      : null;
+
+  let montantRecu: number;
+  if (rawPaiementsList !== null) {
+    montantRecu = rawPaiementsList
+      .filter((p: any) => !p.estAnnule)
+      .reduce((sum: number, p: any) => sum + Number(p.montantRecu ?? 0), 0);
+    montantRecu = Math.round(montantRecu * 100) / 100;
+  } else {
+    montantRecu = Number(creance.montantRecu ?? 0);
+  }
+
+  let solde: number;
+  if (hasValidInvoice || rawPaiementsList !== null) {
+    solde = Math.max(0, Math.round((montantFacture - montantRecu) * 100) / 100);
+  } else {
+    solde =
+      creance.solde !== undefined && creance.solde !== null
+        ? Number(creance.solde)
+        : Math.max(0, Math.round((montantFacture - montantRecu) * 100) / 100);
+  }
+
+  let statutPaiement = creance.statutPaiement ? String(creance.statutPaiement) : 'NON_PAYE';
+
+  const isOverdue = Boolean(
+    solde > 0 &&
+      creance.dateEcheance &&
+      new Date(creance.dateEcheance) < new Date(),
+  );
+
+  if (solde <= 0 || (montantFacture > 0 && montantRecu >= montantFacture)) {
+    statutPaiement = 'PAYE';
+  } else if (montantRecu > 0) {
+    statutPaiement = 'PARTIEL';
+  } else if (isOverdue) {
+    statutPaiement = 'EN_RETARD';
+  } else {
+    statutPaiement = 'NON_PAYE';
+  }
+
+  const dateEmissionStr = creance.dateEmission
+    ? new Date(creance.dateEmission).toISOString().split('T')[0]
+    : new Date().toISOString().split('T')[0];
+
+  const dateEcheanceStr = creance.dateEcheance
+    ? new Date(creance.dateEcheance).toISOString().split('T')[0]
+    : null;
+
+  let compactFacture: CompactFactureForCreance | null = null;
+  if (creance.facture) {
+    const fSousTotal = Number(creance.facture.sousTotal ?? 0);
+    const fMontantTva = Number(creance.facture.montantTva ?? 0);
+    const fMontantTotal =
+      creance.facture.montantTotal !== undefined && creance.facture.montantTotal !== null
+        ? Number(creance.facture.montantTotal)
+        : Math.round((fSousTotal + fMontantTva) * 100) / 100;
+
+    compactFacture = {
+      id: creance.facture.id,
+      numeroFacture: creance.facture.numeroFacture,
+      sousTotal: fSousTotal,
+      montantTva: fMontantTva,
+      montantTotal: fMontantTotal,
+      supprimeLe: creance.facture.supprimeLe
+        ? new Date(creance.facture.supprimeLe).toISOString()
+        : null,
+    };
+  }
+
+  const paiements: CompactPaiementSummary[] = rawPaiementsList !== null
+    ? rawPaiementsList.map((p: any) => ({
+        id: p.id,
+        datePaiement: p.datePaiement
+          ? new Date(p.datePaiement).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0],
+        montantRecu: Number(p.montantRecu ?? 0),
+        methodePaiement: String(p.methodePaiement),
+        estAnnule: Boolean(p.estAnnule),
+      }))
+    : [];
+
+  return {
+    id: creance.id,
+    numeroFacture: creance.numeroFacture,
+    nomClient: creance.nomClient,
+    dateEmission: dateEmissionStr,
+    delaiPaiementJours: creance.delaiPaiementJours ?? 30,
+    montantFacture,
+    montantRecu,
+    solde,
+    dateEcheance: dateEcheanceStr,
+    statutPaiement,
+    estEnRetard: isOverdue,
+    actionRecouvrement: creance.actionRecouvrement ?? null,
+    devise: creance.facture?.devise || creance.devise || 'MAD',
+    facture: compactFacture,
+    paiements,
+  };
+}
 
 @Injectable()
 export class CreancesClientsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // TODO (étape ultérieure) : implémenter la logique métier « Créances clients ».
+  /**
+   * Internal transactional helper to create a CreanceClient from an invoice snapshot.
+   * Reusable by FacturesService and backfill CLI script.
+   */
+  async createFromInvoice(
+    tx: Prisma.TransactionClient,
+    snapshot: {
+      companyId: number;
+      factureId: number;
+      numeroFacture: string;
+      nomClient: string;
+      dateFacture: Date;
+      joursEcheance: number;
+      montantTotal: Prisma.Decimal | number;
+      dateEcheance?: Date | null;
+      devise?: string;
+    },
+  ) {
+    const montantFacture =
+      snapshot.montantTotal instanceof Prisma.Decimal
+        ? snapshot.montantTotal
+        : new Prisma.Decimal(snapshot.montantTotal);
+
+    const existing = await tx.creanceClient.findUnique({
+      where: {
+        companyId_factureId: {
+          companyId: snapshot.companyId,
+          factureId: snapshot.factureId,
+        },
+      },
+    });
+
+    if (existing) {
+      const currentMontantFacture = new Prisma.Decimal(existing.montantFacture);
+      if (!currentMontantFacture.equals(montantFacture)) {
+        const activePayments = await tx.paiementClient.findMany({
+          where: { companyId: snapshot.companyId, factureId: snapshot.factureId, estAnnule: false },
+          select: { montantRecu: true },
+        });
+        const activeTotalDecimal = activePayments.reduce(
+          (sum, p) => sum.add(new Prisma.Decimal(p.montantRecu)),
+          new Prisma.Decimal(0),
+        );
+        const newSolde = montantFacture.sub(activeTotalDecimal);
+        let newStatut: CreanceStatut = CreanceStatut.NON_PAYE;
+        if (newSolde.lessThanOrEqualTo(0) || activeTotalDecimal.greaterThanOrEqualTo(montantFacture)) {
+          newStatut = CreanceStatut.PAYE;
+        } else if (activeTotalDecimal.greaterThan(0)) {
+          newStatut = CreanceStatut.PARTIEL;
+        } else if (existing.dateEcheance && new Date(existing.dateEcheance) < new Date()) {
+          newStatut = CreanceStatut.EN_RETARD;
+        }
+        return tx.creanceClient.update({
+          where: { id: existing.id },
+          data: {
+            montantFacture,
+            montantRecu: activeTotalDecimal,
+            statutPaiement: newStatut,
+          },
+        });
+      }
+      return existing;
+    }
+
+    let dateEcheance = snapshot.dateEcheance;
+    if (!dateEcheance) {
+      dateEcheance = new Date(snapshot.dateFacture);
+      dateEcheance.setDate(dateEcheance.getDate() + (snapshot.joursEcheance || 30));
+    }
+
+    let initialStatut: CreanceStatut = CreanceStatut.NON_PAYE;
+    if (dateEcheance < new Date()) {
+      initialStatut = CreanceStatut.EN_RETARD;
+    }
+
+    return tx.creanceClient.create({
+      data: {
+        companyId: snapshot.companyId,
+        factureId: snapshot.factureId,
+        numeroFacture: snapshot.numeroFacture,
+        nomClient: snapshot.nomClient,
+        dateEmission: snapshot.dateFacture,
+        delaiPaiementJours: snapshot.joursEcheance || 30,
+        montantFacture,
+        montantRecu: new Prisma.Decimal(0),
+        dateEcheance,
+        statutPaiement: initialStatut,
+        devise: snapshot.devise || 'MAD',
+      },
+    });
+  }
+
+  /**
+   * Strictly read-only paginated list query.
+   */
+  async findAll(
+    companyId?: number,
+    query: QueryCreanceClientDto = {},
+  ): Promise<PaginatedResult<CreanceView>> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour consulter les créances');
+    }
+
+    const page = query.page ?? 1;
+    const rawLimit = query.limit ?? 10;
+    const limit = Math.min(Math.max(rawLimit, 1), 100);
+
+    const allowedSortFields = [
+      'id',
+      'numeroFacture',
+      'nomClient',
+      'dateEmission',
+      'dateEcheance',
+      'montantFacture',
+      'montantRecu',
+      'solde',
+    ];
+    const sortBy = allowedSortFields.includes(query.sortBy ?? '') ? query.sortBy! : 'id';
+    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+
+    const where: Prisma.CreanceClientWhereInput = {
+      facture: {
+        companyId,
+        supprimeLe: null,
+      },
+    };
+
+    if (query.devise) {
+      where.devise = query.devise.trim().toUpperCase();
+    }
+
+    if (query.search) {
+      const s = query.search.trim();
+      where.OR = [
+        { numeroFacture: { contains: s, mode: 'insensitive' } },
+        { nomClient: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.nomClient) {
+      where.nomClient = { contains: query.nomClient.trim(), mode: 'insensitive' };
+    }
+
+    if (query.statutPaiement) {
+      if (query.statutPaiement === CreanceStatut.EN_RETARD) {
+        where.AND = [
+          {
+            statutPaiement: {
+              in: [CreanceStatut.NON_PAYE, CreanceStatut.PARTIEL, CreanceStatut.EN_RETARD],
+            },
+          },
+          { dateEcheance: { lt: new Date() } },
+        ];
+      } else {
+        where.statutPaiement = query.statutPaiement;
+      }
+    }
+
+    if (query.dateFrom || query.dateTo) {
+      where.dateEmission = {
+        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+      };
+    }
+
+    const [creanceRecords, total] = await Promise.all([
+      this.prisma.creanceClient.findMany({
+        where,
+        orderBy: { [sortBy]: sortOrder },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          facture: {
+            include: {
+              paiements: {
+                where: { estAnnule: false },
+                select: {
+                  id: true,
+                  datePaiement: true,
+                  montantRecu: true,
+                  methodePaiement: true,
+                  estAnnule: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.creanceClient.count({ where }),
+    ]);
+
+    return {
+      data: creanceRecords.map(toCreanceView),
+      meta: buildPaginationMeta(total, page, limit),
+    };
+  }
+
+  /**
+   * Strictly read-only single receivable query with single-step relational ownership constraint.
+   */
+  async findOne(id: number, companyId?: number): Promise<CreanceView> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour consulter une créance');
+    }
+
+    const creance = await this.prisma.creanceClient.findFirst({
+      where: {
+        id,
+        facture: {
+          companyId,
+          supprimeLe: null,
+        },
+      },
+      include: {
+        facture: true,
+      },
+    });
+
+    if (!creance) {
+      throw new NotFoundException(`Créance #${id} introuvable`);
+    }
+
+    const paiements = await this.prisma.paiementClient.findMany({
+      where: { companyId, factureId: creance.factureId },
+      orderBy: { datePaiement: 'desc' },
+    });
+
+    return toCreanceView({
+      ...creance,
+      facture: {
+        ...(creance.facture as any),
+        paiements,
+      },
+    });
+  }
+
+  /**
+   * Strictly read-only stats computation.
+   */
+  async findStats(
+    companyId?: number,
+    query?: QueryCreanceClientDto,
+  ): Promise<CreanceStats & { devise?: string }> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour consulter les statistiques');
+    }
+
+    const where: Prisma.CreanceClientWhereInput = {
+      facture: {
+        companyId,
+        supprimeLe: null,
+      },
+    };
+
+    if (query?.devise) {
+      where.devise = query.devise.trim().toUpperCase();
+    }
+
+    const creances = await this.prisma.creanceClient.findMany({
+      where,
+      include: {
+        facture: {
+          include: {
+            paiements: {
+              where: { estAnnule: false },
+              select: { montantRecu: true },
+            },
+          },
+        },
+      },
+    });
+
+    // Check if there are mixed devises
+    const devisesInActive = new Set(creances.map((c) => c.devise || 'MAD'));
+    const isMixed = devisesInActive.size > 1;
+
+    let totalMontantFacture = new Prisma.Decimal(0);
+    let totalMontantRecu = new Prisma.Decimal(0);
+    let totalSolde = new Prisma.Decimal(0);
+
+    let nonPayesCount = 0;
+    let partielCount = 0;
+    let payesCount = 0;
+    let enRetardCount = 0;
+
+    const now = new Date();
+
+    for (const c of creances) {
+      const hasValidInvoice = Boolean(c.facture && !c.facture.supprimeLe);
+      let montantFacture: Prisma.Decimal;
+      if (hasValidInvoice) {
+        if (c.facture.montantTotal !== null && c.facture.montantTotal !== undefined) {
+          montantFacture = new Prisma.Decimal(c.facture.montantTotal);
+        } else {
+          const st = new Prisma.Decimal(c.facture.sousTotal ?? 0);
+          const tva = new Prisma.Decimal(c.facture.montantTva ?? 0);
+          montantFacture = st.add(tva);
+        }
+      } else {
+        montantFacture = new Prisma.Decimal(c.montantFacture ?? 0);
+      }
+
+      let montantRecu: Prisma.Decimal;
+      if (c.facture?.paiements) {
+        montantRecu = (c.facture.paiements as any[]).reduce(
+          (sum: Prisma.Decimal, p: any) => sum.add(new Prisma.Decimal(p.montantRecu ?? 0)),
+          new Prisma.Decimal(0),
+        );
+      } else {
+        montantRecu = new Prisma.Decimal(c.montantRecu ?? 0);
+      }
+
+      const rawSolde = montantFacture.sub(montantRecu);
+      const solde = rawSolde.isNegative() ? new Prisma.Decimal(0) : rawSolde;
+
+      if (!isMixed) {
+        totalMontantFacture = totalMontantFacture.add(montantFacture);
+        totalMontantRecu = totalMontantRecu.add(montantRecu);
+        totalSolde = totalSolde.add(solde);
+      }
+
+      const isOverdue =
+        solde.greaterThan(0) && c.dateEcheance && new Date(c.dateEcheance) < now;
+
+      if (solde.isZero() || montantRecu.greaterThanOrEqualTo(montantFacture)) {
+        payesCount++;
+      } else if (isOverdue) {
+        enRetardCount++;
+      } else if (montantRecu.greaterThan(0)) {
+        partielCount++;
+      } else {
+        nonPayesCount++;
+      }
+    }
+
+    return {
+      totalCreances: creances.length,
+      totalMontantFacture: Math.round(totalMontantFacture.toNumber() * 100) / 100,
+      totalMontantRecu: Math.round(totalMontantRecu.toNumber() * 100) / 100,
+      totalSolde: Math.round(totalSolde.toNumber() * 100) / 100,
+      nonPayesCount,
+      partielCount,
+      payesCount,
+      enRetardCount,
+      devise: isMixed ? 'MIXED' : query?.devise || Array.from(devisesInActive)[0] || 'MAD',
+    };
+  }
 }

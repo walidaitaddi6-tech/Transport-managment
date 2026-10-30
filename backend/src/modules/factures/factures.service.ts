@@ -1,9 +1,1133 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { CreanceStatut, ModeFacturation, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildPaginationMeta, type PaginatedResult } from '../../common/dto/paginated-result';
+import { CreancesClientsService } from '../creances-clients/creances-clients.service';
+import { CreateFactureDto } from './dto/create-facture.dto';
+import { UpdateFactureDto } from './dto/update-facture.dto';
+import { QueryFactureDto } from './dto/query-facture.dto';
+import {
+  generateInvoicePdfBuffer,
+  InvoicePdfViewModel,
+  sanitizeFilename,
+} from './utils/facture-pdf.generator';
+import { formatInvoiceNumber } from './utils/invoice-number.formatter';
+import { amountInWordsFR } from './utils/amount-in-words';
+import { formatMoney } from './utils/format-money';
+import { formatDateFR } from './utils/format-date';
+
+export interface CompactVoyageSummary {
+  idVoyage: number;
+  lieuChargement: string;
+  lieuDechargement: string;
+  statut: string;
+  tracteur: string | null;
+  remorque: string | null;
+  dateChargementStr: string | null;
+  numeroCmr: string | null;
+}
+
+export interface FactureView {
+  id: number;
+  numeroFacture: string;
+  modeFacturation: string;
+  nomClient: string;
+  idVoyage: number | null;
+  dateFacture: string;
+  joursEcheance: number;
+  dateEcheance: string | null;
+  devise: string;
+  sousTotal: number;
+  tauxTva: number;
+  montantTva: number;
+  montantTotal: number;
+  montantEnLettres: string | null;
+  cheminPdf: string | null;
+  notes: string | null;
+  fichierJoint: string | null;
+  creePar: number | null;
+  statut: string;
+  estEnRetard?: boolean;
+  supprimeLe: string | null;
+  voyage?: CompactVoyageSummary | null;
+  montantPaye: string;
+  soldeRestant: string;
+}
+
+export interface FactureStats {
+  totalFactures: number;
+  totalSousTotal: number;
+  totalTva: number;
+  totalTtc: number;
+  emisesCount: number;
+  payeesCount: number;
+  annuleesCount: number;
+  devise?: string;
+  totalSousTotalByCurrency?: Record<string, number>;
+  totalTvaByCurrency?: Record<string, number>;
+  totalTtcByCurrency?: Record<string, number>;
+}
+
+// formatMoneyDecimal removed — replaced by formatMoney() from format-money.ts (Decimal-safe)
+
+export function toFactureView(facture: any): FactureView {
+  const sousTotal =
+    facture.sousTotal !== undefined && facture.sousTotal !== null ? Number(facture.sousTotal) : 0;
+  const tauxTva =
+    facture.tauxTva !== undefined && facture.tauxTva !== null ? Number(facture.tauxTva) : 20.0;
+
+  const calculatedTva = Math.round(sousTotal * (tauxTva / 100) * 100) / 100;
+  const montantTva =
+    facture.montantTva !== undefined && facture.montantTva !== null
+      ? Number(facture.montantTva)
+      : calculatedTva;
+
+  const montantTotal =
+    facture.montantTotal !== undefined && facture.montantTotal !== null
+      ? Number(facture.montantTotal)
+      : sousTotal + montantTva;
+
+  // Decimal calculations for paid/remaining balances (preventing N+1 by using query relation loaded values)
+  const payeDecimal = (facture.paiements ?? [])
+    .filter((p: any) => !p.estAnnule)
+    .reduce(
+      (total: Prisma.Decimal, p: any) => total.plus(p.montantRecu),
+      new Prisma.Decimal(0),
+    );
+  const totalTtcDecimal = new Prisma.Decimal(facture.montantTotal ?? sousTotal + calculatedTva);
+  const rawRemaining = totalTtcDecimal.minus(payeDecimal);
+  const soldeDecimal = rawRemaining.isNegative() ? new Prisma.Decimal(0) : rawRemaining;
+
+  const montantPaye = payeDecimal.toFixed(2);
+  const soldeRestant = soldeDecimal.toFixed(2);
+
+  const isOverdue = Boolean(
+    !facture.supprimeLe &&
+      soldeDecimal.greaterThan(0) &&
+      facture.dateEcheance &&
+      new Date(facture.dateEcheance) < new Date(),
+  );
+
+  let statut = 'EMISE';
+  if (facture.supprimeLe) {
+    statut = 'ANNULEE';
+  } else if (soldeDecimal.isZero()) {
+    statut = 'PAYEE';
+  } else if (payeDecimal.greaterThan(0) && soldeDecimal.greaterThan(0)) {
+    statut = 'PARTIELLEMENT_PAYEE';
+  } else if (isOverdue) {
+    statut = 'EN_RETARD';
+  }
+
+  return {
+    id: facture.id,
+    numeroFacture: facture.numeroFacture,
+    modeFacturation: facture.modeFacturation || 'AVEC_FACTURE',
+    nomClient: facture.nomClient,
+    idVoyage: facture.idVoyage ?? null,
+    dateFacture: facture.dateFacture
+      ? new Date(facture.dateFacture).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0],
+    joursEcheance: facture.joursEcheance ?? 30,
+    dateEcheance: facture.dateEcheance
+      ? new Date(facture.dateEcheance).toISOString().split('T')[0]
+      : null,
+    devise: facture.devise || 'MAD',
+    sousTotal,
+    tauxTva,
+    montantTva,
+    montantTotal,
+    montantEnLettres: facture.montantEnLettres ?? null,
+    cheminPdf: facture.cheminPdf ?? null,
+    notes: facture.notes ?? null,
+    fichierJoint: facture.fichierJoint ?? null,
+    creePar: facture.creePar ?? null,
+    statut,
+    estEnRetard: isOverdue,
+    supprimeLe: facture.supprimeLe ? new Date(facture.supprimeLe).toISOString() : null,
+    voyage: facture.voyage
+      ? {
+        idVoyage: facture.voyage.idVoyage,
+        lieuChargement: facture.voyage.lieuChargement,
+        lieuDechargement: facture.voyage.lieuDechargement,
+        statut: facture.voyage.statut,
+        tracteur: facture.voyage.tracteur ?? null,
+        remorque: facture.voyage.remorque ?? null,
+        dateChargementStr: facture.voyage.dateChargement
+          ? new Date(facture.voyage.dateChargement).toISOString().split('T')[0]
+          : null,
+        numeroCmr: facture.voyage.numeroCmr ?? null,
+      }
+      : null,
+    montantPaye,
+    soldeRestant,
+  };
+}
 
 @Injectable()
 export class FacturesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly creancesService: CreancesClientsService,
+  ) { }
 
-  // TODO (étape ultérieure) : implémenter la logique métier « Factures ».
+  /**
+   * Internal transactional helper to create a Facture record from a Voyage inside an existing transaction.
+   * Can be called by FacturesService.create() or VoyagesService.update() (on mode change when invoice already exists).
+   */
+  async createInvoiceInTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      idVoyage: number;
+      companyId: number;
+      userId?: number;
+      dateFacture?: Date;
+      joursEcheance?: number;
+      tauxTvaInput?: number;
+      notes?: string;
+      overrideModeFacturation?: ModeFacturation;
+    },
+  ): Promise<FactureView> {
+    const { idVoyage, companyId, userId, notes, overrideModeFacturation } = params;
+
+    // Fail-closed validation before any sensitive operation
+    if (!companyId || typeof companyId !== 'number' || !Number.isInteger(companyId) || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise valide requis pour la création de facture');
+    }
+
+    // 1. Load Voyage and verify existence and tenant ownership
+    const voyage = await tx.voyage.findFirst({
+      where: { idVoyage, companyId },
+    });
+
+    if (!voyage) {
+      throw new NotFoundException(`Le voyage #${idVoyage} est introuvable`);
+    }
+
+    if (voyage.companyId !== companyId) {
+      throw new ForbiddenException(
+        `Le voyage #${idVoyage} n'appartient pas à l'entreprise #${companyId}`,
+      );
+    }
+
+    // 2. Verify Voyage has a client name
+    if (!voyage.nomClient) {
+      throw new UnprocessableEntityException(
+        `Le voyage #${idVoyage} n'est pas rattaché à un client. Veuillez d'abord lui attribuer un client.`,
+      );
+    }
+
+    const nomClient = voyage.nomClient;
+    const targetCompanyId = companyId;
+
+    // Load CompanySettings defaults if parameters are omitted
+    let defaultTva = 20.0;
+    let defaultDelai = 30;
+    if (params.tauxTvaInput === undefined || params.joursEcheance === undefined) {
+      const companySettings = await tx.companySettings.findFirst({
+        where: { companyId: targetCompanyId },
+      });
+      if (companySettings) {
+        if (companySettings.tauxTvaParDefaut !== null && companySettings.tauxTvaParDefaut !== undefined) {
+          defaultTva = Number(companySettings.tauxTvaParDefaut);
+        }
+        if (companySettings.delaiPaiementParDefaut !== null && companySettings.delaiPaiementParDefaut !== undefined) {
+          defaultDelai = companySettings.delaiPaiementParDefaut;
+        }
+      }
+    }
+
+    const tauxTvaInput = params.tauxTvaInput !== undefined ? params.tauxTvaInput : defaultTva;
+    if (!Number.isFinite(tauxTvaInput) || tauxTvaInput < 0 || tauxTvaInput > 100) {
+      throw new BadRequestException('Le taux de TVA doit être compris entre 0 et 100%');
+    }
+
+    const dateFacture = params.dateFacture ? new Date(params.dateFacture) : new Date();
+    const joursEcheance = params.joursEcheance ?? defaultDelai;
+
+    // 3. Derive authoritative HT amount from Voyage + FraisImmobilisation using Prisma.Decimal
+    const frais = await tx.fraisImmobilisation.findUnique({
+      where: { idVoyage: voyage.idVoyage },
+    });
+    const fraisHT = frais
+      ? new Prisma.Decimal(frais.prixParJour).mul(frais.nombreJoursRetard)
+      : new Prisma.Decimal(0);
+
+    const sousTotalDecimal = new Prisma.Decimal(voyage.montantVoyage).add(fraisHT).toDecimalPlaces(2);
+    const tauxTvaDecimal = new Prisma.Decimal(tauxTvaInput);
+    const montantTvaDecimal = sousTotalDecimal.mul(tauxTvaDecimal).div(100).toDecimalPlaces(2);
+    const montantTotalDecimal = sousTotalDecimal.add(montantTvaDecimal).toDecimalPlaces(2);
+
+    // 4. Generate dynamic amount in words
+    const montantEnLettres = amountInWordsFR(montantTotalDecimal, voyage.devise || 'MAD');
+
+    // 5. Concurrency-safe company-scoped annual & mode-scoped sequence generation
+    const year = dateFacture.getFullYear();
+    const modeFacturation =
+      overrideModeFacturation || voyage.modeFacturation || ModeFacturation.AVEC_FACTURE;
+    const prefix = modeFacturation === ModeFacturation.SANS_FACTURE ? 'BL' : 'F';
+
+    // 5.1 Find MAX existing numeric sequence in factures for this company, year, and mode
+    const existingFactures = await tx.facture.findMany({
+      where: {
+        companyId: targetCompanyId,
+        numeroFacture: { startsWith: prefix, endsWith: `/${year}` },
+      },
+      select: { numeroFacture: true },
+    });
+
+    let maxExistingSeq = 0;
+    const seqRegex = new RegExp(`^${prefix}(\\d+)\\/${year}$`);
+    for (const f of existingFactures) {
+      const match = f.numeroFacture.match(seqRegex);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxExistingSeq) {
+          maxExistingSeq = num;
+        }
+      }
+    }
+
+    const nextSeq = maxExistingSeq + 1;
+
+    // 5.2 Concurrency-safe company-scoped annual & mode-scoped sequence update
+    const seqResult: Array<{ dernier_numero: number }> = await tx.$queryRaw`
+      INSERT INTO invoice_sequences (company_id, annee, mode_facturation, dernier_numero)
+      VALUES (${targetCompanyId}, ${year}, ${modeFacturation}::"mode_facturation", ${nextSeq})
+      ON CONFLICT (company_id, annee, mode_facturation) DO UPDATE
+      SET dernier_numero = GREATEST(invoice_sequences.dernier_numero + 1, ${nextSeq})
+      RETURNING dernier_numero;
+    `;
+    const seqNum = seqResult[0].dernier_numero;
+    const numeroFacture = formatInvoiceNumber(year, seqNum, modeFacturation);
+
+    // 6. Create Facture record (omitting generated columns montantTva and montantTotal)
+    const facture = await tx.facture.create({
+      data: {
+        companyId: targetCompanyId,
+        numeroFacture,
+        modeFacturation,
+        nomClient,
+        idVoyage: voyage.idVoyage,
+        dateFacture,
+        joursEcheance,
+        sousTotal: sousTotalDecimal,
+        tauxTva: tauxTvaDecimal,
+        montantEnLettres,
+        notes: notes ? notes.trim() : null,
+        creePar: userId ?? null,
+        devise: voyage.devise || 'MAD',
+      },
+      include: {
+        voyage: true,
+      },
+    });
+
+    // 7. Update Voyage status to FACTURE
+    await tx.voyage.update({
+      where: { idVoyage: voyage.idVoyage },
+      data: { statut: 'FACTURE' },
+    });
+
+    // 8. Auto-create CreanceClient record in transaction
+    await this.creancesService.createFromInvoice(tx, {
+      companyId: targetCompanyId,
+      factureId: facture.id,
+      numeroFacture,
+      nomClient,
+      dateFacture,
+      joursEcheance,
+      montantTotal: Number(montantTotalDecimal),
+      dateEcheance: facture.dateEcheance ?? null,
+      devise: voyage.devise || 'MAD',
+    });
+
+    const full = await tx.facture.findUnique({
+      where: { id: facture.id },
+      include: {
+        voyage: true,
+        creance: true,
+        paiements: {
+          where: { estAnnule: false },
+          select: {
+            montantRecu: true,
+            estAnnule: true,
+          },
+        },
+      },
+    });
+
+    return toFactureView(full);
+  }
+
+  /**
+   * Recalculates an existing active Facture (HT = Voyage HT + FraisImmobilisation HT)
+   * and updates its associated CreanceClient record inside a transaction.
+   * Does NOT modify invoice number, mode, sequence, or existing payments.
+   */
+  async recalculateFactureInTx(
+    tx: Prisma.TransactionClient,
+    companyId: number,
+    idVoyage: number,
+  ): Promise<FactureView | null> {
+    const activeFacture = await tx.facture.findFirst({
+      where: { idVoyage, companyId, supprimeLe: null },
+    });
+
+    if (!activeFacture) {
+      return null;
+    }
+
+    const voyage = await tx.voyage.findFirst({
+      where: { idVoyage, companyId },
+    });
+
+    if (!voyage) {
+      return null;
+    }
+
+    const frais = await tx.fraisImmobilisation.findUnique({
+      where: { idVoyage },
+    });
+
+    const voyageHT = new Prisma.Decimal(voyage.montantVoyage);
+    const fraisHT = frais
+      ? new Prisma.Decimal(frais.prixParJour).mul(frais.nombreJoursRetard)
+      : new Prisma.Decimal(0);
+
+    const newSousTotal = voyageHT.add(fraisHT).toDecimalPlaces(2);
+    const tauxTvaDecimal = new Prisma.Decimal(activeFacture.tauxTva);
+    const montantTvaDecimal = newSousTotal.mul(tauxTvaDecimal).div(100).toDecimalPlaces(2);
+    const montantTotalDecimal = newSousTotal.add(montantTvaDecimal).toDecimalPlaces(2);
+
+    const newMontantEnLettres = amountInWordsFR(
+      montantTotalDecimal,
+      activeFacture.devise || 'MAD',
+    );
+
+    // Update the active Facture
+    await tx.facture.update({
+      where: { id: activeFacture.id },
+      data: {
+        sousTotal: newSousTotal,
+        montantEnLettres: newMontantEnLettres,
+      },
+    });
+
+    // Synchronize associated CreanceClient
+    const creance = await tx.creanceClient.findUnique({
+      where: {
+        companyId_factureId: {
+          companyId: activeFacture.companyId,
+          factureId: activeFacture.id,
+        },
+      },
+    });
+
+    if (creance) {
+      const activePayments = await tx.paiementClient.findMany({
+        where: {
+          companyId: activeFacture.companyId,
+          factureId: activeFacture.id,
+          estAnnule: false,
+        },
+        select: { montantRecu: true },
+      });
+      const montantRecu = activePayments.reduce(
+        (sum, p) => sum.add(new Prisma.Decimal(p.montantRecu)),
+        new Prisma.Decimal(0),
+      );
+      const newSolde = montantTotalDecimal.sub(montantRecu);
+
+      let newStatutPaiement: CreanceStatut = CreanceStatut.PARTIEL;
+      if (newSolde.lessThanOrEqualTo(0) || montantRecu.greaterThanOrEqualTo(montantTotalDecimal)) {
+        newStatutPaiement = CreanceStatut.PAYE;
+      } else if (montantRecu.greaterThan(0)) {
+        newStatutPaiement = CreanceStatut.PARTIEL;
+      } else {
+        const dateEcheance = creance.dateEcheance;
+        if (dateEcheance && new Date(dateEcheance) < new Date()) {
+          newStatutPaiement = CreanceStatut.EN_RETARD;
+        } else {
+          newStatutPaiement = CreanceStatut.NON_PAYE;
+        }
+      }
+
+      await tx.creanceClient.update({
+        where: { id: creance.id },
+        data: {
+          montantFacture: montantTotalDecimal,
+          montantRecu,
+          statutPaiement: newStatutPaiement,
+        },
+      });
+    }
+
+    const updatedFull = await tx.facture.findUnique({
+      where: { id: activeFacture.id },
+      include: {
+        voyage: true,
+        creance: true,
+        paiements: {
+          where: { estAnnule: false },
+          select: {
+            montantRecu: true,
+            estAnnule: true,
+          },
+        },
+      },
+    });
+
+    return toFactureView(updatedFull);
+  }
+
+  async create(dto: CreateFactureDto, companyId: number, userId?: number): Promise<FactureView> {
+    if (!companyId || typeof companyId !== 'number' || !Number.isInteger(companyId) || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour créer une facture');
+    }
+
+    if (!dto.idVoyage) {
+      throw new UnprocessableEntityException('Le voyage est obligatoire pour créer une facture');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      return this.createInvoiceInTx(tx, {
+        idVoyage: dto.idVoyage,
+        companyId,
+        userId,
+        dateFacture: dto.dateFacture ? new Date(dto.dateFacture) : undefined,
+        joursEcheance: dto.joursEcheance,
+        tauxTvaInput: dto.tauxTva,
+        notes: dto.notes,
+      });
+    });
+  }
+
+  async findAll(
+    companyId?: number,
+    query: QueryFactureDto = {},
+  ): Promise<PaginatedResult<FactureView>> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour consulter les factures');
+    }
+
+    const page = query.page ?? 1;
+    const rawLimit = query.limit ?? 10;
+    const limit = Math.min(Math.max(rawLimit, 1), 100);
+
+    const allowedSortFields = [
+      'id',
+      'numeroFacture',
+      'nomClient',
+      'dateFacture',
+      'dateEcheance',
+      'sousTotal',
+      'montantTotal',
+    ];
+    const sortBy = allowedSortFields.includes(query.sortBy ?? '') ? query.sortBy! : 'id';
+    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+
+    const where: Prisma.FactureWhereInput = {
+      companyId,
+      supprimeLe: query.statut === 'ANNULEE' ? { not: null } : null,
+    };
+
+    if (query.idVoyage) {
+      where.idVoyage = query.idVoyage;
+    }
+
+    if (query.search) {
+      const s = query.search.trim();
+      where.OR = [
+        { numeroFacture: { contains: s, mode: 'insensitive' } },
+        { nomClient: { contains: s, mode: 'insensitive' } },
+        { notes: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.nomClient) {
+      where.nomClient = { contains: query.nomClient.trim(), mode: 'insensitive' };
+    }
+
+    if (query.devise) {
+      where.devise = query.devise.trim().toUpperCase();
+    }
+
+    if (query.modeFacturation) {
+      where.modeFacturation = query.modeFacturation;
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.facture.findMany({
+        where,
+        orderBy: { [sortBy]: sortOrder },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          voyage: true,
+          creance: true,
+          paiements: {
+            where: { estAnnule: false },
+            select: {
+              montantRecu: true,
+              estAnnule: true,
+            },
+          },
+        },
+      }),
+      this.prisma.facture.count({ where }),
+    ]);
+
+    return {
+      data: data.map(toFactureView),
+      meta: buildPaginationMeta(total, page, limit),
+    };
+  }
+
+  async findStats(
+    companyId?: number,
+    query?: QueryFactureDto,
+  ): Promise<FactureStats & { devise?: string }> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour consulter les statistiques');
+    }
+
+    const where: Prisma.FactureWhereInput = { companyId, supprimeLe: null };
+    const annuleesWhere: Prisma.FactureWhereInput = { companyId, supprimeLe: { not: null } };
+
+    if (query?.devise) {
+      const d = query.devise.trim().toUpperCase();
+      where.devise = d;
+      annuleesWhere.devise = d;
+    }
+
+    if (query?.nomClient) {
+      const nc = query.nomClient.trim();
+      where.nomClient = { contains: nc, mode: 'insensitive' };
+      annuleesWhere.nomClient = { contains: nc, mode: 'insensitive' };
+    }
+
+    if (query?.modeFacturation) {
+      where.modeFacturation = query.modeFacturation;
+      annuleesWhere.modeFacturation = query.modeFacturation;
+    }
+
+    if (query?.search) {
+      const s = query.search.trim();
+      const searchOr: Prisma.FactureWhereInput[] = [
+        { numeroFacture: { contains: s, mode: 'insensitive' } },
+        { nomClient: { contains: s, mode: 'insensitive' } },
+        { notes: { contains: s, mode: 'insensitive' } },
+      ];
+      where.OR = searchOr;
+      annuleesWhere.OR = searchOr;
+    }
+
+    const activeFactures = await this.prisma.facture.findMany({
+      where,
+      include: { creance: true },
+    });
+
+    const annuleesCount = await this.prisma.facture.count({
+      where: annuleesWhere,
+    });
+
+    // Check if there are mixed devises
+    const devisesInActive = new Set(activeFactures.map((f) => (f.devise || 'MAD').trim().toUpperCase()));
+    const isMixed = devisesInActive.size > 1;
+
+    let totalSousTotal = 0;
+    let totalTva = 0;
+    let totalTtc = 0;
+    let emisesCount = 0;
+    let payeesCount = 0;
+
+    const totalSousTotalByCurrency: Record<string, number> = {};
+    const totalTvaByCurrency: Record<string, number> = {};
+    const totalTtcByCurrency: Record<string, number> = {};
+
+    for (const f of activeFactures) {
+      const cur = (f.devise || 'MAD').trim().toUpperCase();
+      const st = Number(f.sousTotal || 0);
+      const ttc = Number(f.montantTotal || 0);
+      const tva = Number(f.montantTva ?? (ttc - st));
+
+      totalSousTotalByCurrency[cur] = Math.round(((totalSousTotalByCurrency[cur] || 0) + st) * 100) / 100;
+      totalTvaByCurrency[cur] = Math.round(((totalTvaByCurrency[cur] || 0) + tva) * 100) / 100;
+      totalTtcByCurrency[cur] = Math.round(((totalTtcByCurrency[cur] || 0) + ttc) * 100) / 100;
+
+      if (!isMixed) {
+        totalSousTotal += st;
+        totalTva += tva;
+        totalTtc += ttc;
+      }
+
+      if (f.creance?.statutPaiement === 'PAYE') {
+        payeesCount++;
+      } else {
+        emisesCount++;
+      }
+    }
+
+    return {
+      totalFactures: activeFactures.length,
+      totalSousTotal: Math.round(totalSousTotal * 100) / 100,
+      totalTva: Math.round(totalTva * 100) / 100,
+      totalTtc: Math.round(totalTtc * 100) / 100,
+      emisesCount,
+      payeesCount,
+      annuleesCount,
+      devise: isMixed ? 'MIXED' : query?.devise ? query.devise.trim().toUpperCase() : Array.from(devisesInActive)[0] || 'MAD',
+      totalSousTotalByCurrency,
+      totalTvaByCurrency,
+      totalTtcByCurrency,
+    };
+  }
+
+  async findOne(id: number, companyId?: number): Promise<FactureView> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour consulter une facture');
+    }
+
+    const facture = await this.prisma.facture.findFirst({
+      where: { id, companyId },
+      include: {
+        voyage: true,
+        creance: true,
+        paiements: {
+          where: { estAnnule: false },
+          select: {
+            montantRecu: true,
+            estAnnule: true,
+          },
+        },
+      },
+    });
+
+    if (!facture) {
+      throw new NotFoundException(`Facture #${id} introuvable`);
+    }
+
+    return toFactureView(facture);
+  }
+
+  /**
+   * Internal transactional helper to check if an active Facture is fully paid (PAYEE: montantRecu >= montantTotal).
+   * Reused by PAYEE protection checks in FacturesService and VoyagesService.
+   */
+  async isFacturePayeeInTx(
+    tx: Prisma.TransactionClient,
+    companyId: number,
+    idVoyageOrFactureId: { idVoyage?: number; factureId?: number },
+  ): Promise<{ isPayee: boolean; activeFacture: any | null }> {
+    const where: Prisma.FactureWhereInput = { companyId, supprimeLe: null };
+    if (idVoyageOrFactureId.idVoyage !== undefined) {
+      where.idVoyage = idVoyageOrFactureId.idVoyage;
+    } else if (idVoyageOrFactureId.factureId !== undefined) {
+      where.id = idVoyageOrFactureId.factureId;
+    } else {
+      return { isPayee: false, activeFacture: null };
+    }
+
+    const activeFacture = await tx.facture.findFirst({
+      where,
+      include: {
+        paiements: {
+          where: { estAnnule: false },
+          select: { montantRecu: true, estAnnule: true },
+        },
+      },
+    });
+
+    if (!activeFacture) {
+      return { isPayee: false, activeFacture: null };
+    }
+
+    const payeDecimal = (activeFacture.paiements ?? [])
+      .filter((p: any) => !p.estAnnule)
+      .reduce(
+        (sum: Prisma.Decimal, p: any) => sum.plus(p.montantRecu),
+        new Prisma.Decimal(0),
+      );
+
+    const sousTotalDecimal = new Prisma.Decimal(activeFacture.sousTotal);
+    const tauxTvaDecimal = new Prisma.Decimal(activeFacture.tauxTva);
+    const calculatedTva = sousTotalDecimal.mul(tauxTvaDecimal).div(100).toDecimalPlaces(2);
+    const totalTtcDecimal =
+      activeFacture.montantTotal !== null && activeFacture.montantTotal !== undefined
+        ? new Prisma.Decimal(activeFacture.montantTotal)
+        : sousTotalDecimal.add(calculatedTva);
+
+    const isPayee = payeDecimal.greaterThanOrEqualTo(totalTtcDecimal);
+
+    return { isPayee, activeFacture };
+  }
+
+  async update(id: number, dto: UpdateFactureDto, companyId?: number): Promise<FactureView> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour modifier une facture');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.facture.findFirst({ where: { id, companyId } });
+      if (!existing) {
+        throw new NotFoundException(`Facture #${id} introuvable`);
+      }
+
+      if (
+        dto.tauxTva !== undefined &&
+        (!Number.isFinite(dto.tauxTva) || dto.tauxTva < 0 || dto.tauxTva > 100)
+      ) {
+        throw new BadRequestException('Le taux de TVA doit être compris entre 0 et 100%');
+      }
+
+      const isTauxTvaChanged =
+        dto.tauxTva !== undefined &&
+        !new Prisma.Decimal(dto.tauxTva).equals(existing.tauxTva);
+
+      if (isTauxTvaChanged) {
+        const { isPayee } = await this.isFacturePayeeInTx(tx, companyId, { factureId: id });
+        if (isPayee) {
+          throw new BadRequestException('Cette facture est déjà payée et ne peut plus être modifiée.');
+        }
+      }
+
+      const updatedTauxTva =
+        dto.tauxTva !== undefined ? new Prisma.Decimal(dto.tauxTva) : existing.tauxTva;
+      const sousTotalDecimal = existing.sousTotal;
+      const montantTvaDecimal = sousTotalDecimal.mul(updatedTauxTva).div(100).toDecimalPlaces(2);
+      const montantTotalDecimal = sousTotalDecimal.add(montantTvaDecimal).toDecimalPlaces(2);
+      const montantEnLettres = amountInWordsFR(montantTotalDecimal, existing.devise || 'MAD');
+
+      const updated = await tx.facture.update({
+        where: { id: existing.id },
+        data: {
+          tauxTva: updatedTauxTva,
+          montantEnLettres,
+          ...(dto.notes !== undefined ? { notes: dto.notes ? dto.notes.trim() : null } : {}),
+        },
+        include: {
+          voyage: true,
+          creance: true,
+          paiements: {
+            where: { estAnnule: false },
+            select: {
+              montantRecu: true,
+              estAnnule: true,
+            },
+          },
+        },
+      });
+
+      if (isTauxTvaChanged) {
+        const creance = await tx.creanceClient.findUnique({
+          where: {
+            companyId_factureId: {
+              companyId: existing.companyId,
+              factureId: existing.id,
+            },
+          },
+        });
+
+        if (creance) {
+          const activePayments = await tx.paiementClient.findMany({
+            where: {
+              companyId: existing.companyId,
+              factureId: existing.id,
+              estAnnule: false,
+            },
+            select: { montantRecu: true },
+          });
+          const montantRecu = activePayments.reduce(
+            (sum, p) => sum.add(new Prisma.Decimal(p.montantRecu)),
+            new Prisma.Decimal(0),
+          );
+          const newSolde = montantTotalDecimal.sub(montantRecu);
+
+          let newStatutPaiement: CreanceStatut = CreanceStatut.PARTIEL;
+          if (newSolde.lessThanOrEqualTo(0) || montantRecu.greaterThanOrEqualTo(montantTotalDecimal)) {
+            newStatutPaiement = CreanceStatut.PAYE;
+          } else if (montantRecu.greaterThan(0)) {
+            newStatutPaiement = CreanceStatut.PARTIEL;
+          } else {
+            const dateEcheance = creance.dateEcheance;
+            if (dateEcheance && new Date(dateEcheance) < new Date()) {
+              newStatutPaiement = CreanceStatut.EN_RETARD;
+            } else {
+              newStatutPaiement = CreanceStatut.NON_PAYE;
+            }
+          }
+
+          await tx.creanceClient.update({
+            where: { id: creance.id },
+            data: {
+              montantFacture: montantTotalDecimal,
+              montantRecu,
+              statutPaiement: newStatutPaiement,
+            },
+          });
+        }
+      }
+
+      const fullUpdated = await tx.facture.findUnique({
+        where: { id: existing.id },
+        include: {
+          voyage: true,
+          creance: true,
+          paiements: {
+            where: { estAnnule: false },
+            select: {
+              montantRecu: true,
+              estAnnule: true,
+            },
+          },
+        },
+      });
+
+      return toFactureView(fullUpdated);
+    });
+  }
+
+  async remove(id: number, companyId?: number): Promise<{ id: number; message: string }> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour supprimer une facture');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.facture.findFirst({ where: { id, companyId } });
+      if (!existing) {
+        throw new NotFoundException(`Facture #${id} introuvable`);
+      }
+
+      const { isPayee } = await this.isFacturePayeeInTx(tx, companyId, { factureId: id });
+      if (isPayee) {
+        throw new BadRequestException('Cette facture est déjà payée et ne peut plus être modifiée.');
+      }
+
+      await tx.facture.update({
+        where: { id: existing.id },
+        data: { supprimeLe: new Date() },
+      });
+
+      return { id, message: `Facture #${id} annulée avec succès (Soft delete)` };
+    });
+  }
+
+  async generatePdf(
+    id: number,
+    companyId?: number,
+    includeStamp: boolean = false,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    if (!companyId || companyId <= 0) {
+      throw new UnauthorizedException('Identifiant entreprise requis pour générer le PDF de la facture');
+    }
+
+    const facture = await this.prisma.facture.findFirst({
+      where: { id, companyId },
+      include: {
+        voyage: {
+          include: {
+            fraisImmobilisation: true,
+          },
+        },
+        creance: true,
+      },
+    });
+
+    if (!facture || facture.supprimeLe) {
+      throw new NotFoundException(`Facture #${id} annulée ou introuvable`);
+    }
+
+    // Load company settings
+    const company = await this.prisma.companySettings.findFirst({
+      where: { companyId: facture.companyId },
+    });
+
+    const hasName = Boolean(company?.nomEntreprise && company.nomEntreprise.trim().length > 0);
+    const hasAddress = Boolean(company?.adresse && company.adresse.trim().length > 0);
+    const hasPhone = Boolean(company?.telephone && company.telephone.trim().length > 0);
+    const hasEmail = Boolean(company?.email && company.email.trim().length > 0);
+
+    const isConfigured = hasName && hasAddress && hasPhone && hasEmail;
+
+    if (!isConfigured || !company) {
+      throw new UnprocessableEntityException(
+        "Impossible de générer la facture PDF : le profil de l'entreprise est incomplet. Veuillez configurer le nom, l'adresse, le téléphone et l'email dans les paramètres.",
+      );
+    }
+
+    // Resolve client details from nomClient (denormalized field)
+    let clientDetails = {
+      nomEntreprise: facture.nomClient,
+      ice: null as string | null,
+      adresse: null as string | null,
+      telephone: null as string | null,
+      email: null as string | null,
+    };
+
+    const clientDb = await this.prisma.client.findFirst({
+      where: {
+        companyId: facture.companyId,
+        nomEntreprise: { equals: facture.nomClient, mode: 'insensitive' },
+      },
+    });
+    if (clientDb) {
+      clientDetails = {
+        nomEntreprise: clientDb.nomEntreprise,
+        ice: clientDb.ice ?? null,
+        adresse: clientDb.adresse ?? null,
+        telephone: clientDb.telephone ?? null,
+        email: clientDb.email ?? null,
+      };
+    }
+
+    const view = toFactureView(facture);
+
+    // Determine currency from facture or company settings
+    const devise = facture.devise || company.devise || 'MAD';
+    const tauxTvaNum = Number(facture.tauxTva ?? 20);
+
+    // Calculate FraisImmobilisation & Voyage HT decomposition
+    const frais = (facture.voyage as any)?.fraisImmobilisation ?? null;
+    let fraisImmobilisationDto = null;
+    let montantVoyageHT = Number(facture.sousTotal);
+
+    if (frais && Number(frais.prixParJour) > 0 && frais.nombreJoursRetard > 0) {
+      const montantFraisHT = new Prisma.Decimal(frais.prixParJour).mul(frais.nombreJoursRetard);
+      const montantFraisNum = Number(montantFraisHT);
+      fraisImmobilisationDto = {
+        prixParJour: Number(frais.prixParJour),
+        nombreJoursRetard: frais.nombreJoursRetard,
+        montantTotal: montantFraisNum,
+        montantTotalFormatted: formatMoney(montantFraisHT, devise),
+      };
+      montantVoyageHT = Math.max(0, Number(facture.sousTotal) - montantFraisNum);
+    }
+
+    const viewModel: InvoicePdfViewModel = {
+      numeroFacture: facture.numeroFacture,
+      dateFactureStr: formatDateFR(view.dateFacture),
+      dateEcheanceStr: view.dateEcheance ? formatDateFR(view.dateEcheance) : '—',
+      statut: view.statut,
+      tauxTva: tauxTvaNum,
+      sousTotalFormatted: formatMoney(facture.sousTotal, devise),
+      tauxTvaFormatted: `${tauxTvaNum} %`,
+      montantTvaFormatted: formatMoney(facture.montantTva ?? new Prisma.Decimal(0), devise),
+      montantTotalFormatted: formatMoney(facture.montantTotal ?? new Prisma.Decimal(0), devise),
+      montantEnLettres:
+        facture.montantEnLettres || amountInWordsFR(facture.montantTotal || 0, devise),
+      notes: facture.notes ?? null,
+      client: clientDetails,
+      transport: facture.voyage
+        ? {
+          idVoyage: facture.voyage.idVoyage,
+          typeVoyage: facture.voyage.typeVoyage,
+          tracteur: facture.voyage.tracteur ?? null,
+          remorque: facture.voyage.remorque ?? null,
+          nomConducteur: facture.voyage.nomConducteur ?? null,
+          lieuChargement: facture.voyage.lieuChargement,
+          lieuDechargement: facture.voyage.lieuDechargement,
+          dateChargementStr: formatDateFR(
+            facture.voyage.dateChargement?.toISOString().split('T')[0],
+          ),
+          numeroCmr: facture.voyage.numeroCmr ?? null,
+          montantVoyageFormatted: formatMoney(montantVoyageHT, devise),
+        }
+        : null,
+      fraisImmobilisation: fraisImmobilisationDto,
+      company: {
+        nomEntreprise: company.nomEntreprise!,
+        nomLegal: company.nomLegal ?? null,
+        adresse: company.adresse!,
+        ville: company.ville ?? null,
+        pays: company.pays ?? null,
+        telephone: company.telephone!,
+        telephoneSecondaire: company.telephoneSecondaire ?? null,
+        email: company.email!,
+        ice: company.ice ?? null,
+        identifiantFiscal: company.identifiantFiscal ?? null,
+        registreCommerce: company.registreCommerce ?? null,
+        cnss: company.cnss ?? null,
+        patente: company.patente ?? null,
+        siteWeb: company.siteWeb ?? null,
+        nomBanque: company.nomBanque ?? null,
+        rib: company.rib ?? null,
+        iban: company.iban ?? null,
+        swiftBic: company.swiftBic ?? null,
+        devise,
+        footerText: company.textePiedDePage ?? null,
+        legalTaxNote: company.noteLegaleTva ?? null,
+        logoPhysicalPath: company.logoPath ?? null,
+        stampPhysicalPath: company.stampPath ?? null,
+      },
+      template: company.templateFacture || 'CLASSIC_TRANSPORT',
+    };
+
+    const buffer = await generateInvoicePdfBuffer(viewModel, { includeStamp });
+    const rawFilename = `Facture-${facture.numeroFacture}.pdf`;
+    const filename = sanitizeFilename(rawFilename);
+
+    return { buffer, filename };
+  }
+
+  async locatePosition(
+    targetId: number,
+    companyId: number,
+    limit: number = 10,
+  ): Promise<{ found: boolean; page: number; total: number; targetId: number }> {
+    if (!companyId || !targetId) {
+      return { found: false, page: 1, total: 0, targetId };
+    }
+
+    let facture = await this.prisma.facture.findFirst({
+      where: {
+        companyId,
+        id: targetId,
+        supprimeLe: null,
+      },
+      select: { id: true },
+    });
+
+    if (!facture) {
+      const creance = await this.prisma.creanceClient.findFirst({
+        where: {
+          companyId,
+          id: targetId,
+        },
+        select: { factureId: true },
+      });
+      if (creance) {
+        facture = await this.prisma.facture.findFirst({
+          where: {
+            companyId,
+            id: creance.factureId,
+            supprimeLe: null,
+          },
+          select: { id: true },
+        });
+      }
+    }
+
+    if (!facture) {
+      return { found: false, page: 1, total: 0, targetId };
+    }
+
+    const count = await this.prisma.facture.count({
+      where: {
+        companyId,
+        supprimeLe: null,
+        id: { gt: facture.id },
+      },
+    });
+
+    const page = Math.floor(count / limit) + 1;
+    return { found: true, page, total: count + 1, targetId: facture.id };
+  }
 }

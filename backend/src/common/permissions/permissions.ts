@@ -54,6 +54,13 @@ export const MODULES: ModuleDef[] = [
   { key: 'dettes_fournisseurs', label: 'Dettes fournisseurs', valider: true },
   { key: 'paiements_fournisseurs', label: 'Paiements fournisseurs', valider: true },
   { key: 'gestion_paiements', label: 'Gestion des paiements', valider: true },
+  { key: 'parametres_entreprise', label: 'Paramètres de l’entreprise', valider: false },
+  { key: 'employes', label: 'Employés', valider: false },
+  { key: 'paiements_employes', label: 'Paiements employés', valider: false },
+  { key: 'traversees_maritimes', label: 'Traversées maritimes', valider: true },
+  { key: 'cheques_lettres_change', label: 'Chèques & Lettres de change', valider: true },
+  { key: 'stock_gasoil', label: 'Gestion du stock gasoil', valider: true },
+  { key: 'carnet_entretien', label: 'Carnet d’entretien', valider: false },
 ];
 
 export const PROFILES = [
@@ -68,6 +75,20 @@ export const PROFILES = [
 ] as const;
 
 export type ProfileName = (typeof PROFILES)[number];
+
+/**
+ * Rôles reconnus comme super-administrateurs (accès total, bypass de toutes les permissions).
+ * Canonique : ADMIN_GENERAL. ADMIN est un alias historique conservé pour compatibilité.
+ * Toute vérification super-admin dans guards, services et stratégie JWT doit
+ * référencer cette constante plutôt que dupliquer la logique.
+ */
+export const SUPER_ADMIN_ROLES = ['ADMIN_GENERAL', 'ADMIN'] as const;
+export type SuperAdminRole = (typeof SUPER_ADMIN_ROLES)[number];
+
+/** Retourne true si le nom de rôle donné est un super-administrateur reconnu. */
+export function isSuperAdmin(roleName: string): boolean {
+  return (SUPER_ADMIN_ROLES as readonly string[]).includes(roleName);
+}
 
 // ---------------------------------------------------------------------
 // Fabriques de matrices
@@ -109,7 +130,11 @@ export function fullMatrix(): PermissionsMatrix {
   return matrix;
 }
 
-/** Complète une matrice partielle avec les modules manquants (à false). */
+/**
+ * Complète une matrice partielle avec les modules manquants (à false).
+ * Invariant backend : si `voir === false`, TOUTES les autres actions du module
+ * sont forcées à `false`. Seules les valeurs strictement `true` sont accordées.
+ */
 export function normalizeMatrix(input: unknown): PermissionsMatrix {
   const base = emptyMatrix();
   if (input && typeof input === 'object') {
@@ -117,14 +142,15 @@ export function normalizeMatrix(input: unknown): PermissionsMatrix {
     for (const mod of MODULES) {
       const p = provided[mod.key];
       if (p) {
+        const voir = p.voir === true;
         base[mod.key] = {
-          voir: !!p.voir,
-          ajouter: !!p.ajouter,
-          modifier: !!p.modifier,
-          supprimer: !!p.supprimer,
-          exporter: !!p.exporter,
-          imprimer: !!p.imprimer,
-          valider: mod.valider ? !!p.valider : false,
+          voir,
+          ajouter: voir && p.ajouter === true,
+          modifier: voir && p.modifier === true,
+          supprimer: voir && p.supprimer === true,
+          exporter: voir && p.exporter === true,
+          imprimer: voir && p.imprimer === true,
+          valider: mod.valider ? voir && p.valider === true : false,
         };
       }
     }
@@ -160,6 +186,9 @@ const OPERATIONNEL = [
   'voyages',
   'bons_carburant',
   'depenses_vehicules',
+  'traversees_maritimes',
+  'stock_gasoil',
+  'carnet_entretien',
 ];
 
 const FINANCE = [
@@ -171,9 +200,18 @@ const FINANCE = [
   'paiements_fournisseurs',
   'gestion_paiements',
   'depenses_administratives',
+  'cheques_lettres_change',
 ];
 
-const ALL = { voir: true, ajouter: true, modifier: true, supprimer: true, exporter: true, imprimer: true, valider: true };
+const ALL = {
+  voir: true,
+  ajouter: true,
+  modifier: true,
+  supprimer: true,
+  exporter: true,
+  imprimer: true,
+  valider: true,
+};
 
 function administrateurDefaults(): PermissionsMatrix {
   const m = fullMatrix();
@@ -194,6 +232,7 @@ function comptableDefaults(): PermissionsMatrix {
   grant(m, ['dashboard'], { voir: true });
   grant(m, ['clients'], { voir: true, exporter: true, imprimer: true });
   grant(m, FINANCE, ALL);
+  grant(m, ['paiements_employes'], { voir: true, ajouter: true, modifier: true, supprimer: false });
   return m;
 }
 
@@ -207,7 +246,10 @@ function chauffeurDefaults(): PermissionsMatrix {
   return m;
 }
 
-export const PROFILE_DEFAULTS: Record<Exclude<ProfileName, 'ADMIN_GENERAL' | 'ADMIN'>, PermissionsMatrix> = {
+export const PROFILE_DEFAULTS: Record<
+  Exclude<ProfileName, 'ADMIN_GENERAL' | 'ADMIN'>,
+  PermissionsMatrix
+> = {
   ADMINISTRATEUR: administrateurDefaults(),
   EXPLOITANT: exploitantDefaults(),
   GESTIONNAIRE: exploitantDefaults(),
@@ -218,20 +260,28 @@ export const PROFILE_DEFAULTS: Record<Exclude<ProfileName, 'ADMIN_GENERAL' | 'AD
 
 /**
  * Calcule la matrice EFFECTIVE d'un utilisateur.
- * - ADMIN_GENERAL / ADMIN : accès total.
- * - permissions stockées (non nulles) : utilisées telles quelles (profil Personnalisé ou override).
- * - sinon : valeurs par défaut du profil.
+ * - ADMIN_GENERAL / ADMIN : accès total et bypass direct.
+ * - Profils système prédéfinis (hors PERSONNALISE) : utilisent les valeurs par défaut du profil.
+ * - PERSONNALISE ou Rôle sur mesure en base : utilise les `user.permissions` normalisées.
+ * - Si les permissions sont omises ou nulles pour PERSONNALISE/rôle sur mesure : retourne emptyMatrix().
  */
-export function computeEffectivePermissions(
-  roleName: string,
-  stored: unknown,
-): PermissionsMatrix {
-  if (roleName === 'ADMIN_GENERAL' || roleName === 'ADMIN') {
+export function computeEffectivePermissions(roleName: string, stored: unknown): PermissionsMatrix {
+  if (isSuperAdmin(roleName)) {
     return fullMatrix();
   }
+
+  // Les profils système prédéfinis (hors PERSONNALISE) utilisent les valeurs système par défaut.
+  if (
+    roleName !== 'PERSONNALISE' &&
+    Object.prototype.hasOwnProperty.call(PROFILE_DEFAULTS, roleName)
+  ) {
+    return PROFILE_DEFAULTS[roleName as keyof typeof PROFILE_DEFAULTS];
+  }
+
+  // PERSONNALISE ou rôle sur mesure : utilise les permissions utilisateur stockées.
   if (stored && typeof stored === 'object' && Object.keys(stored as object).length > 0) {
     return normalizeMatrix(stored);
   }
-  const defaults = PROFILE_DEFAULTS[roleName as Exclude<ProfileName, 'ADMIN_GENERAL' | 'ADMIN'>];
-  return defaults ? defaults : emptyMatrix();
+
+  return emptyMatrix();
 }

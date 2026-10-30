@@ -1,0 +1,77 @@
+export interface CompactVoyageSummary {
+  idVoyage: number;
+  lieuChargement: string;
+  lieuDechargement: string;
+  statut: string;
+  tracteur: string | null;
+}
+
+export interface Facture {
+  id: number;
+  numeroFacture: string;
+  modeFacturation?: 'AVEC_FACTURE' | 'SANS_FACTURE';
+  nomClient: string;
+  idVoyage: number | null;
+  dateFacture: string;
+  joursEcheance: number;
+  dateEcheance: string | null;
+  devise: string;
+  sousTotal: number;
+  tauxTva: number;
+  montantTva: number;
+  montantTotal: number;
+  montantEnLettres: string | null;
+  cheminPdf: string | null;
+  notes: string | null;
+  fichierJoint: string | null;
+  creePar: number | null;
+  statut: string;
+  estEnRetard?: boolean;
+  supprimeLe: string | null;
+  voyage?: CompactVoyageSummary | null;
+  montantPaye: string;
+  soldeRestant: string;
+}
+
+export interface FactureStats {
+  totalFactures: number;
+  totalSousTotal: number;
+  totalTva: number;
+  totalTtc: number;
+  emisesCount: number;
+  payeesCount: number;
+  annuleesCount: number;
+  devise?: string;
+  totalSousTotalByCurrency?: Record<string, number>;
+  totalTvaByCurrency?: Record<string, number>;
+  totalTtcByCurrency?: Record<string, number>;
+}
+
+export interface CreateFacturePayload {
+  idVoyage: number;
+  numeroFacture?: string;
+  nomClient?: string;
+  dateFacture?: string;
+  joursEcheance?: number;
+  sousTotal?: number;
+  tauxTva?: number;
+  montantEnLettres?: string;
+  notes?: string;
+}
+
+export type UpdateFacturePayload = Partial<CreateFacturePayload>;
+
+export interface FacturesQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  nomClient?: string;
+  idVoyage?: number;
+  modeFacturation?: 'AVEC_FACTURE' | 'SANS_FACTURE';
+  statut?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  devise?: string;
+}

@@ -20,10 +20,24 @@ import { DepensesAdministrativesModule } from './modules/depenses-administrative
 import { FacturesModule } from './modules/factures/factures.module';
 import { CreancesClientsModule } from './modules/creances-clients/creances-clients.module';
 import { PaiementsClientsModule } from './modules/paiements-clients/paiements-clients.module';
+import { ForexModule } from './modules/forex/forex.module';
 import { FournisseursModule } from './modules/fournisseurs/fournisseurs.module';
 import { DettesFournisseursModule } from './modules/dettes-fournisseurs/dettes-fournisseurs.module';
 import { PaiementsFournisseursModule } from './modules/paiements-fournisseurs/paiements-fournisseurs.module';
 import { GestionPaiementsModule } from './modules/gestion-paiements/gestion-paiements.module';
+import { CompanySettingsModule } from './modules/company-settings/company-settings.module';
+import { CompanyProvisioningModule } from './modules/company-provisioning/company-provisioning.module';
+import { EmployesModule } from './modules/employes/employes.module';
+import { PaiementsEmployesModule } from './modules/paiements-employes/paiements-employes.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { LettresDeChangeModule } from './modules/lettres-de-change/lettres-de-change.module';
+import { ChequesModule } from './modules/cheques/cheques.module';
+import { TraverseesMaritimesModule } from './modules/traversees-maritimes/traversees-maritimes.module';
+import { ChequesLettresChangeModule } from './modules/cheques-lettres-change/cheques-lettres-change.module';
+import { StockGasoilModule } from './modules/stock-gasoil/stock-gasoil.module';
+import { CarnetEntretienModule } from './modules/carnet-entretien/carnet-entretien.module';
 
 @Module({
   imports: [
@@ -34,6 +48,15 @@ import { GestionPaiementsModule } from './modules/gestion-paiements/gestion-paie
     }),
     PrismaModule,
     AuthModule,
+    DashboardModule,
+    PlatformAdminModule,
+    NotificationsModule,
+    LettresDeChangeModule,
+    ChequesModule,
+    TraverseesMaritimesModule,
+    ChequesLettresChangeModule,
+    StockGasoilModule,
+    CarnetEntretienModule,
 
     // Modules métier
     UsersModule,
@@ -50,10 +73,15 @@ import { GestionPaiementsModule } from './modules/gestion-paiements/gestion-paie
     FacturesModule,
     CreancesClientsModule,
     PaiementsClientsModule,
+    ForexModule,
     FournisseursModule,
     DettesFournisseursModule,
     PaiementsFournisseursModule,
     GestionPaiementsModule,
+    CompanySettingsModule,
+    CompanyProvisioningModule,
+    EmployesModule,
+    PaiementsEmployesModule,
   ],
 })
 export class AppModule {}
